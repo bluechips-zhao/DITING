@@ -1,0 +1,100 @@
+# backend
+/data/
+*.db
+*.db-wal
+*.db-shm
+config.json
+scheduler_state.json
+__pycache__/
+*.pyc
+*.pyo
+
+# frontend
+web/node_modules/
+web/.next/
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+*.local
+
+# development tools
+.playwright-mcp/
+.playwright-cli/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# docs
+/docs/
+
+# os
+.DS_Store
+Thumbs.db
+
+# claude code local state
+.claude/
+
+# 内嵌前端的单二进制产物
+/artex
+/diting.exe
+/diting-improved.exe
+/artex.exe
+/artex-run.log
+# 一键更新在可执行文件旁留下的中间产物（暂存件 / 备份 / 失败版本 / 升级标记）
+/artex.new
+/artex.new.sha256
+/artex.old
+/artex.failed
+/artex.upgrade.json
+/server/webui/dist/
+/dist/
+
+# JWT 签名密钥（运行时生成，存项目根，绝不提交）
+/jwt.key
+
+# Docker 部署生成的本地环境（含密码/密钥，不提交）
+.env
+
+# 调度器运行/模拟产生的事件日志（测试产物，不提交）
+*-events.csv
+
+# bench 基准测试相关（本地产物，不提交）
+/bench/
+/Dockerfile.bench
+/Dockerfile.bench.v2
+# 本地冒烟测试残留
+/smoke.log
+/smoke.pid
+/diting-run.log
+/diting.exe~
+/artex.exe~
+
+# Private handover / local acceptance records are not public project docs.
+/HANDOVER.md
+/IMPLEMENTATION.md
+/UI_ACCEPTANCE.md
+/Go
+/web/media/
+/skills/api-recon/validation-*.json
+**/validation-*.json
+/sidequestion/VALIDATION.md
+
+# Runtime credentials, recordings, exports and archives.
+.env.*
+!.env.example
+*.log
+*.pid
+*.key
+*.pem
+*.p12
+*.pfx
+*.dump
+*.backup
+*.zip
+*.har
+*.pcap
+*.pcapng
+/backups/
+/transcripts/
+/captures/
+/release-work/
