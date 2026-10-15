@@ -1,0 +1,76 @@
+name: regression
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-upgrade:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 ./selfupdate ./config
+  local-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: diting_test
+          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_DB: diting_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U diting_test -d diting_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      ARTEX_PG_DSN: postgres://diting_test:isolated_ci_only@127.0.0.1:5432/diting_test?sslmode=disable
+      ARTEX_CONFIG: /tmp/diting-no-config.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - run: npm run test && npx tsc --noEmit && npm run build:static
+        working-directory: web
+      - run: python3 scripts/test_package.py
+      - run: go test -p 1 -count=1 ./... && go vet ./...
+      - name: Build isolated consumer package
+        env:
+          ARTEX_BUILD_VERSION: 2.4.0
+          ARTEX_SKIP_FRONTEND: "1"
+          ARTEX_SKIP_NPM_CI: "1"
+          ARTEX_COMPRESS: "0"
+          ARTEX_PACKAGE: "1"
+        run: |
+          mkdir -p server/webui/dist
+          cp -R web/out/. server/webui/dist/
+          ./build.sh --target linux/amd64
+          python3 scripts/check-package.py dist/artex-2.4.0-linux-amd64.zip
+      - name: Verify blank first installation
+        env:
+          PGPASSWORD: isolated_ci_only
+          DITING_FRESH_PG_DSN: postgres://diting_test:isolated_ci_only@127.0.0.1:5432/diting_fresh?sslmode=disable
+        run: |
+          createdb -h 127.0.0.1 -U diting_test diting_fresh
+          python3 scripts/run-fresh-install.py dist/artex-linux-amd64/artex 2.4.0
+      - name: Verify database setup and model configuration
+        env:
+          PGPASSWORD: isolated_ci_only
+          DITING_SETUP_PG_DSN: postgres://diting_test:isolated_ci_only@127.0.0.1:5432/diting_setup_ci?sslmode=disable
+        run: |
+          createdb -h 127.0.0.1 -U diting_test diting_setup_ci
+          python3 scripts/run-setup-install.py dist/artex-linux-amd64/artex

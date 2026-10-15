@@ -29,7 +29,7 @@ func TestTaskMetadataPatchReturnsRenameAndPin(t *testing.T) {
 	s := New(ctx, m, t.TempDir(), t.TempDir(), t.TempDir())
 	s.archiveWG.Wait()
 	<-s.side.done
-	token, err := signJWT(s.jwtKey)
+	token, err := s.issueToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestConversationBatchDeleteReportsMissing(t *testing.T) {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
 	defer m.Close()
-	s := New(context.Background(), m, t.TempDir(), t.TempDir(), t.TempDir())
+	s := newStoppedTestServer(m, t.TempDir(), t.TempDir(), t.TempDir())
 	first, err := m.pg.CreateConversation("mainagent", "batch-http-first", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestConversationBatchDeleteReportsMissing(t *testing.T) {
 		_ = m.pg.DeleteConversation(first.ID)
 		_ = m.pg.DeleteConversation(second.ID)
 	}()
-	token, err := signJWT(s.jwtKey)
+	token, err := s.issueToken()
 	if err != nil {
 		t.Fatal(err)
 	}

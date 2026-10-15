@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { LoadError } from "@/components/load-error";
 import { AssetDslSearch } from "@/components/asset-dsl-search";
 import { DataExport } from "@/components/data-export";
 import { AttachAssetsDialog } from "@/components/attach-assets-dialog";
@@ -116,6 +117,7 @@ export default function AssetsPage() {
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [tab, setTab] = React.useState("company");
   const [query, setQuery] = React.useState("");
+  const [metaErrors, setMetaErrors] = React.useState<Record<string, string>>({});
   const [loaded, setLoaded] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [page, setPage] = React.useState(0);
@@ -140,16 +142,12 @@ export default function AssetsPage() {
   const loadMeta = React.useCallback(() => {
     api
       .companies()
-      .then(setCompanies)
-      .catch(() => {
-        /* Keep the last successful company snapshot on a transient failure. */
-      });
+      .then((data) => { setCompanies(data); setMetaErrors((old) => ({ ...old, 企业: "" })); })
+      .catch((e) => setMetaErrors((old) => ({ ...old, 企业: (e as Error).message })));
     api
       .assetCounts()
-      .then(setCounts)
-      .catch(() => {
-        /* Keep the last successful counters on a transient failure. */
-      });
+      .then((data) => { setCounts(data); setMetaErrors((old) => ({ ...old, 资产统计: "" })); })
+      .catch((e) => setMetaErrors((old) => ({ ...old, 资产统计: (e as Error).message })));
   }, []);
 
   // Manual refresh: reload counts/companies and re-fetch the current page.
@@ -316,6 +314,7 @@ export default function AssetsPage() {
 
   return (
     <div className="flex h-[calc(100vh-6rem)] min-h-0 flex-col gap-4">
+      {Object.entries(metaErrors).filter(([, message]) => message).map(([key, message]) => <LoadError key={key} message={key + "读取失败：" + message} retry={loadMeta} />)}
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">资产</h1>

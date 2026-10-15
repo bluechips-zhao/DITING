@@ -12,11 +12,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { LoadError } from "@/components/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { api, sseUrl } from "@/lib/api";
+import { api, sseUrl, openEventStream } from "@/lib/api";
 import type { UpdateCheck, UpdateProgress } from "@/lib/types";
 
 /** 等待新版本上线的最长时间。一次升级要经过三次进程启动（暂存 → 换装 → 新版），
@@ -44,6 +45,15 @@ export function UpdateCard() {
   // 与 progress 分开：暂存完成后进程就没了，SSE 会断，此时要切到轮询 /api/health。
   const [restarting, setRestarting] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [checkError, setCheckError] = React.useState("");
+  const accepted = React.useRef(false);
+  const waiting = React.useRef(false);
+  const mounted = React.useRef(true);
+  const stream = React.useRef<ReturnType<typeof openEventStream> | null>(null);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; stream.current?.close(); };
+  }, []);
 
   // quiet 同时决定要不要绕过后端缓存：进页面时的自动检查用缓存（顶栏刚查过），
   // 用户手动点「检查更新」则强制回源，否则刚发布的版本要等缓存过期才看得到。
@@ -52,6 +62,7 @@ export function UpdateCard() {
     api
       .checkUpdate(!quiet)
       .then((r) => {
+        setCheckError("");
         setInfo(r);
         if (!quiet) {
           if (r.error) toast.error("检查更新失败：" + r.error);
@@ -60,6 +71,7 @@ export function UpdateCard() {
         }
       })
       .catch((e) => {
+        setCheckError("检查更新失败：" + (e as Error).message);
         if (!quiet) toast.error("检查更新失败：" + (e as Error).message);
       })
       .finally(() => setChecking(false));
@@ -74,12 +86,14 @@ export function UpdateCard() {
   // 判据必须是"版本变了"而不是"能连上了"：换装过程中旧版本会短暂地重新起来一次
   // （那一次只负责把 artex.new 换上去然后立刻退出），只看连通性会误判成功。
   const waitForNewVersion = React.useCallback(async (fromVersion: string) => {
+    if (waiting.current || !mounted.current) return;
+    waiting.current = true;
     setRestarting(true);
     const deadline = Date.now() + RESTART_TIMEOUT_MS;
-    while (Date.now() < deadline) {
+    while (mounted.current && Date.now() < deadline) {
       await sleep(2000);
       try {
-        const r = await fetch("/api/health", { cache: "no-store" });
+        const r = await fetch("/api/health", { cache: "no-store", signal: AbortSignal.timeout(5000) });
         if (r.ok) {
           const j = (await r.json()) as { version?: string };
           if (j.version && j.version !== fromVersion) {
@@ -93,14 +107,21 @@ export function UpdateCard() {
         // 重启窗口内连不上是预期的，继续轮询。
       }
     }
+    if (!mounted.current) return;
+    waiting.current = false;
     setRestarting(false);
+    setBusy(false);
+    setProgress(null);
+    check(true);
     toast.error("等待服务重启超时。请检查后端日志，或确认 artex 是通过 start.sh / start.bat 启动的。");
-  }, []);
+  }, [check]);
 
   // 订阅更新进度。SSE 不走 Next 的 /api 重写（那层会缓冲，事件推不出来）。
   const openStream = React.useCallback(
     (fromVersion: string) => {
-      const es = new EventSource(sseUrl("/api/update/stream"));
+      stream.current?.close();
+      const es = openEventStream(sseUrl("/api/update/stream"));
+      stream.current = es;
       es.onmessage = (ev) => {
         let p: UpdateProgress;
         try {
@@ -123,12 +144,42 @@ export function UpdateCard() {
       es.onerror = () => {
         // 进程退出时 SSE 必然断开。如果已经进入等待重启，这属于正常现象，
         // 交给 /api/health 轮询继续判定即可。
-        es.close();
+        // Keep EventSource open so transient disconnects reconnect automatically.
       };
       return es;
     },
     [waitForNewVersion],
   );
+
+  React.useEffect(() => {
+    if (!busy || restarting || !info) return;
+    let disposed = false;
+    let pending = false;
+    const poll = async () => {
+      if (pending || !accepted.current) return;
+      pending = true;
+      try {
+        const status = await api.updateStatus();
+        if (disposed) return;
+        setProgress(status.progress);
+        if (status.progress.phase === "staged") {
+          stream.current?.close();
+          void waitForNewVersion(info.current);
+        } else if (status.progress.phase === "failed") {
+          stream.current?.close();
+          setBusy(false);
+          toast.error("更新失败：" + (status.progress.error || status.progress.message));
+        }
+      } catch {
+        if (!disposed) {
+          stream.current?.close();
+          void waitForNewVersion(info.current);
+        }
+      } finally { pending = false; }
+    };
+    const timer = setInterval(() => void poll(), 3000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [busy, restarting, info, waitForNewVersion]);
 
   const doUpdate = () => {
     if (!info) return;
@@ -145,9 +196,12 @@ export function UpdateCard() {
 
     setBusy(true);
     setProgress({ phase: "downloading", percent: 0, message: "准备中…" });
-    const es = openStream(from);
-    api.applyUpdate().catch((e) => {
-      es.close();
+    accepted.current = false;
+    api.applyUpdate().then(() => {
+      accepted.current = true;
+      openStream(from);
+    }).catch((e) => {
+      stream.current?.close();
       setBusy(false);
       setProgress(null);
       toast.error("启动更新失败：" + (e as Error).message);
@@ -227,6 +281,7 @@ export function UpdateCard() {
           )}
         </div>
 
+        {checkError && <LoadError message={checkError} retry={() => check(false)} busy={checking} />}
         {info?.boot_notice && (
           <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">
             <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
@@ -291,7 +346,7 @@ export function UpdateCard() {
           <Button
             size="sm"
             onClick={doUpdate}
-            disabled={busy || restarting || !info?.has_update || info?.asset_available === false}
+            disabled={checking || busy || restarting || !!checkError || !!info?.error || !info?.has_update || info?.asset_available === false}
           >
             <DownloadIcon className="size-4" />
             {info?.has_update ? `更新到 ${info.latest}` : "立即更新"}

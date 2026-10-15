@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,9 +19,9 @@ func TestTaskTemplateHTTPCRUD(t *testing.T) {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
 	defer m.Close()
-	s := New(context.Background(), m, t.TempDir(), t.TempDir(), t.TempDir())
+	s := newStoppedTestServer(m, t.TempDir(), t.TempDir(), t.TempDir())
 	h := s.Handler()
-	token, err := signJWT(s.jwtKey)
+	token, err := s.issueToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,13 +89,13 @@ func TestConversationPatchReturnsPinState(t *testing.T) {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
 	defer m.Close()
-	s := New(context.Background(), m, t.TempDir(), t.TempDir(), t.TempDir())
+	s := newStoppedTestServer(m, t.TempDir(), t.TempDir(), t.TempDir())
 	conversation, err := m.pg.CreateConversation("mainagent", "pin through http", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = m.pg.DeleteConversation(conversation.ID) })
-	token, err := signJWT(s.jwtKey)
+	token, err := s.issueToken()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -52,7 +52,7 @@ func TestInheritedActivityDetailAndRelationDeletion(t *testing.T) {
 	}
 
 	s := newStoppedTestServer(m, t.TempDir(), t.TempDir(), t.TempDir())
-	token, err := signJWT(s.jwtKey)
+	token, err := s.issueToken()
 	if err != nil {
 		t.Fatal(err)
 	}

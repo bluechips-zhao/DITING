@@ -1,6 +1,6 @@
 {
   "name": "artex-web",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -12,7 +12,8 @@
     "check": "biome check",
     "check:fix": "biome check --write",
     "prepare": "husky",
-    "generate:presets": "ts-node -P tsconfig.scripts.json src/scripts/generate-theme-presets.ts"
+    "generate:presets": "ts-node -P tsconfig.scripts.json src/scripts/generate-theme-presets.ts",
+    "test": "node --experimental-strip-types --test src/lib/*.test.mjs"
   },
   "lint-staged": {
     "*.{js,ts,jsx,tsx}": [

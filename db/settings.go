@@ -14,11 +14,24 @@ func (d *DB) GetSetting(key string) (value string, ok bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
+	if secretSetting(key) {
+		value, err = d.reveal("settings."+key, value, false)
+		if err != nil {
+			return "", false, err
+		}
+	}
 	return value, true, nil
 }
 
 // SetSetting upserts a setting value.
 func (d *DB) SetSetting(key, value string) error {
+	if secretSetting(key) {
+		var err error
+		value, err = d.protect("settings."+key, value, false)
+		if err != nil {
+			return err
+		}
+	}
 	_, err := d.Exec(`
 INSERT INTO settings(key, value) VALUES ($1, $2)
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, key, value)
@@ -30,6 +43,12 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, key
 // 调用方先 GetSetting 再写的那种检查就只是快速失败路径——读出错或并发撞车时，
 // 已有的值也不会被 ON CONFLICT DO UPDATE 顺手覆盖掉。
 func (d *DB) InsertSettingIfAbsent(key, value string) (inserted bool, err error) {
+	if secretSetting(key) {
+		value, err = d.protect("settings."+key, value, false)
+		if err != nil {
+			return false, err
+		}
+	}
 	res, err := d.Exec(`
 INSERT INTO settings(key, value) VALUES ($1, $2)
 ON CONFLICT (key) DO NOTHING`, key, value)

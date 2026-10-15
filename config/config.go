@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -163,7 +164,7 @@ func (d Database) buildDSN() string {
 	}
 	u := url.URL{
 		Scheme: "postgres",
-		Host:   host + ":" + strconv.Itoa(port),
+		Host:   net.JoinHostPort(host, strconv.Itoa(port)),
 		Path:   "/" + d.DBName,
 	}
 	if d.User != "" {
@@ -175,6 +176,28 @@ func (d Database) buildDSN() string {
 	}
 	u.RawQuery = url.Values{"sslmode": {ssl}}.Encode()
 	return u.String()
+}
+
+// ConnectionString validates database fields submitted by the local setup UI.
+func (d Database) ConnectionString() (string, error) {
+	if d.DSN != "" {
+		return "", fmt.Errorf("请填写数据库连接字段")
+	}
+	if strings.TrimSpace(d.Host) == "" || strings.ContainsAny(d.Host, "/\\@?# \t\r\n") {
+		return "", fmt.Errorf("请填写有效数据库主机")
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return "", fmt.Errorf("数据库端口须为 1–65535")
+	}
+	if strings.TrimSpace(d.User) == "" || strings.TrimSpace(d.DBName) == "" {
+		return "", fmt.Errorf("数据库用户名和库名不能为空")
+	}
+	switch d.SSLMode {
+	case "disable", "require", "verify-ca", "verify-full":
+	default:
+		return "", fmt.Errorf("请选择有效 SSL 模式")
+	}
+	return d.buildDSN(), nil
 }
 
 // String is a redacted view of the resolved DSN (password masked) for logging.

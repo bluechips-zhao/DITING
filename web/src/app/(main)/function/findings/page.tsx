@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { LoadError } from "@/components/load-error";
 import { FindingRetestDialog } from "@/components/finding-retest-dialog";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
@@ -129,6 +130,9 @@ const EMPTY_STATS: FindingStats = {
 };
 
 export default function FindingsPage() {
+  const [loadErrors, setLoadErrors] = React.useState<Record<string, string>>({});
+  const clearError = (key: string) => setLoadErrors((old) => ({ ...old, [key]: "" }));
+  const recordError = (key: string, e: unknown) => setLoadErrors((old) => ({ ...old, [key]: e instanceof Error ? e.message : "读取失败" }));
   const [view, setView] = React.useState<FindingView>("flat");
   const [severity, setSeverity] = React.useState<"all" | Severity>("all");
   const [status, setStatus] = React.useState<"all" | FindingStatus>("all");
@@ -333,9 +337,11 @@ export default function FindingsPage() {
         assetScope: activeAssetScope ?? undefined,
       });
       if (request !== flatRequest.current || activeFilterFingerprint.current !== requestFilter) return;
+      clearError("发现列表");
       setFlat({ items: result.items, total: result.total, loaded: true, loading: false });
-    } catch {
+    } catch (e) {
       if (request !== flatRequest.current || activeFilterFingerprint.current !== requestFilter) return;
+      recordError("发现列表", e);
       // Polling keeps the last successful snapshot visible.
       setFlat((current) => ({ ...current, loading: false }));
     }
@@ -351,6 +357,7 @@ export default function FindingsPage() {
     try {
       const result = await api.findingAssetTree({ severity, status, vulnclass, task, query, sort });
       if (request !== assetTreeRequest.current || activeFilterFingerprint.current !== requestFilter) return;
+      clearError("资产树");
       setAssetTree({
         nodes: result.nodes ?? [],
         findingTotal: result.finding_total ?? 0,
@@ -362,7 +369,7 @@ export default function FindingsPage() {
     } catch (e) {
       if (request !== assetTreeRequest.current || activeFilterFingerprint.current !== requestFilter) return;
       setAssetTree((current) => ({ ...current, loading: false }));
-      toast.error(`资产树加载失败：${(e as Error).message}`);
+      recordError("资产树", e);
     }
   }, [filterFingerprint, severity, status, vulnclass, task, query, sort]);
 
@@ -382,11 +389,13 @@ export default function FindingsPage() {
         sort,
       });
       if (request !== groupsRequest.current || activeFilterFingerprint.current !== requestFilter) return;
+      clearError("任务分组");
       setGroups(result.items);
       setGroupTotal(result.total);
       setTotal(result.finding_total);
-    } catch {
-      // Polling keeps the last successful snapshot visible.
+    } catch (e) {
+      if (request !== groupsRequest.current || activeFilterFingerprint.current !== requestFilter) return;
+      recordError("任务分组", e);
     }
   }, [filterFingerprint, page, pageSize, severity, status, vulnclass, task, query, sort]);
 
@@ -419,6 +428,7 @@ export default function FindingsPage() {
           sort,
         });
         if (groupRequests.current[key] !== request || activeFilterFingerprint.current !== requestFilter) return;
+        clearError("分组 " + key);
         setGroupFindings((current) => ({
           ...current,
           [key]: {
@@ -430,8 +440,9 @@ export default function FindingsPage() {
             loading: false,
           },
         }));
-      } catch {
+      } catch (e) {
         if (groupRequests.current[key] !== request || activeFilterFingerprint.current !== requestFilter) return;
+        recordError("分组 " + key, e);
         setGroupFindings((current) => ({
           ...current,
           [key]: {
@@ -787,10 +798,12 @@ export default function FindingsPage() {
   };
 
   // 平铺视图与资产视图右侧是同一张表 + 同一份分页,只是筛选条件不同。
+  React.useEffect(() => setLoadErrors({}), [filterFingerprint, view]);
+
   const flatListCard = (
     <Card className="gap-0 py-0">
       <CardContent className="px-0">
-        {flat.loading && !flat.loaded ? (
+        {!flat.loaded && loadErrors["发现列表"] ? null : flat.loading && !flat.loaded ? (
           <div className="flex min-h-36 items-center justify-center">
             <Spinner />
           </div>
@@ -816,6 +829,17 @@ export default function FindingsPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
+      {Object.entries(loadErrors).filter(([, message]) => message).map(([key, message]) => (
+        <LoadError key={key} message={key + "读取失败：" + message} retry={() => {
+          if (key === "资产树") void loadAssetTree();
+          else if (key === "任务分组") void refreshGroups();
+          else if (key.startsWith("分组 ")) {
+            const id = key.slice(3);
+            const state = groupFindings[id];
+            void loadGroup(id, state?.page ?? 1, state?.pageSize ?? 10);
+          } else void loadFlat();
+        }} />
+      ))}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">发现</h1>
@@ -1108,7 +1132,7 @@ export default function FindingsPage() {
                 </Card>
               );
             })}
-            {groups.length === 0 && (
+            {groups.length === 0 && !loadErrors["任务分组"] && (
               <Card>
                 <CardContent className="py-12 text-center text-sm text-muted-foreground">没有匹配的发现。</CardContent>
               </Card>

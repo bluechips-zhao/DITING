@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,10 +17,11 @@ func TestMgmtAPI(t *testing.T) {
 	if m.pg == nil {
 		t.Skip("postgres unavailable — skipping management API test")
 	}
+	defer m.Close()
 	td := t.TempDir()
-	s := New(context.Background(), m, td, td, td)
+	s := newStoppedTestServer(m, td, td, td)
 	h := s.Handler()
-	tok, err := signJWT(s.jwtKey)
+	tok, err := s.issueToken()
 	if err != nil {
 		t.Fatalf("sign jwt: %v", err)
 	}

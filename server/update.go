@@ -371,3 +371,9 @@ func (s *Server) updateStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// updateStatus supports reconnecting clients without restarting a download.
+func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
+	p, running := updHub.snapshot()
+	writeJSON(w, http.StatusOK, map[string]any{"progress": p, "running": running})
+}

@@ -1,13 +1,17 @@
 package server
 
 import (
+	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,11 +21,11 @@ import (
 )
 
 const (
-	jwtKeyFilename   = "jwt.key"
-	authPassKey      = "auth.password_hash"
-	jwtTTL           = 7 * 24 * time.Hour
-	keyChars         = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	defaultUsername  = "diting"
+	jwtKeyFilename  = "jwt.key"
+	authPassKey     = "auth.password_hash"
+	jwtTTL          = 7 * 24 * time.Hour
+	keyChars        = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	defaultUsername = "diting"
 
 	// 下限与 setup 页的前端校验一致——校验只放在前端等于没放，直接打 API 就能
 	// 绕过。上限是 bcrypt 的硬限制：超过 72 字节 GenerateFromPassword 会返回
@@ -66,8 +70,13 @@ func loadOrCreateJWTKey(keyDir, dataDir string) ([]byte, error) {
 			}
 		}
 	}
-	if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) >= 32 {
+	if data, err := os.ReadFile(path); err == nil {
+		if len(strings.TrimSpace(string(data))) < 32 {
+			return nil, fmt.Errorf("JWT key 文件损坏；已保留原文件，请恢复正确密钥")
+		}
 		return []byte(strings.TrimSpace(string(data))), nil
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read jwt key: %w", err)
 	}
 	buf := make([]byte, 32)
 	for i := range buf {
@@ -77,8 +86,21 @@ func loadOrCreateJWTKey(keyDir, dataDir string) ([]byte, error) {
 		}
 		buf[i] = keyChars[n.Int64()]
 	}
-	if err := os.WriteFile(path, buf, 0600); err != nil {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
 		return nil, fmt.Errorf("write jwt key: %w", err)
+	}
+	_, writeErr := file.Write(buf)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil {
+		return nil, writeErr
+	}
+	if syncErr != nil {
+		return nil, syncErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	log.Printf("[auth] 新 JWT key 已写入 %s", path)
 	return buf, nil
@@ -95,17 +117,60 @@ func signJWT(key []byte) (string, error) {
 
 // verifyJWT returns true when tokenStr is a valid, non-expired HS256 token.
 func verifyJWT(tokenStr string, key []byte) bool {
-	t, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+	t, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (any, error) {
+		if t.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
 		return key, nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired(), jwt.WithSubject(defaultUsername))
 	return err == nil && t.Valid
 }
 
+// Bind sessions to the persisted password hash without disclosing it in JWT claims.
+// Replacing the hash revokes all old sessions, including across process restarts.
+func sessionKey(base []byte, hash string) []byte {
+	if hash == "" {
+		return base
+	}
+	mac := hmac.New(sha256.New, base)
+	mac.Write([]byte("diting-session-v1\x00" + hash))
+	return mac.Sum(nil)
+}
+
+func (s *Server) signingKey() ([]byte, error) {
+	if s.m == nil || s.m.pg == nil {
+		return s.jwtKey, nil
+	}
+	hash, _, err := s.m.pg.GetSetting(authPassKey)
+	if err != nil {
+		return nil, err
+	}
+	return sessionKey(s.jwtKey, hash), nil
+}
+
+func (s *Server) issueToken() (string, error) {
+	key, err := s.signingKey()
+	if err != nil {
+		return "", err
+	}
+	return signJWT(key)
+}
+
+func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) bool {
+	key, err := s.signingKey()
+	if err != nil {
+		writeErr(w, 503, errDataSourceUnavailable)
+		return false
+	}
+	if !verifyJWT(extractToken(r), key) {
+		writeErr(w, 401, "token 无效或已过期，请重新登录")
+		return false
+	}
+	return true
+}
+
 // extractToken reads the JWT from Authorization: Bearer header,
-// artex_token cookie, or ?token= query param (for SSE connections).
+// artex_token cookie. URL tokens are never accepted.
 func extractToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
@@ -113,7 +178,7 @@ func extractToken(r *http.Request) string {
 	if c, err := r.Cookie("artex_token"); err == nil && c.Value != "" {
 		return c.Value
 	}
-	return r.URL.Query().Get("token")
+	return ""
 }
 
 // requireAuth wraps h with JWT validation.
@@ -130,9 +195,29 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 			writeErr(w, 401, "未授权")
 			return
 		}
-		if !verifyJWT(tok, s.jwtKey) {
-			writeErr(w, 401, "token 无效或已过期")
+		if !s.authenticated(w, r) {
 			return
+		}
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			ctx, cancel := context.WithCancel(r.Context())
+			defer cancel()
+			go func() {
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						key, err := s.signingKey()
+						if err != nil || !verifyJWT(tok, key) {
+							cancel()
+							return
+						}
+					}
+				}
+			}()
+			r = r.WithContext(ctx)
 		}
 		h.ServeHTTP(w, r)
 	})
@@ -198,7 +283,7 @@ func (s *Server) authInit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "密码已设置")
 		return
 	}
-	tok, err := signJWT(s.jwtKey)
+	tok, err := signJWT(sessionKey(s.jwtKey, string(hash)))
 	if err != nil {
 		writeErr(w, 500, "token 生成失败")
 		return
@@ -214,8 +299,7 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
-	if !verifyJWT(extractToken(r), s.jwtKey) {
-		writeErr(w, 401, "未授权")
+	if !s.authenticated(w, r) {
 		return
 	}
 	var req struct {
@@ -252,8 +336,13 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "密码加密失败")
 		return
 	}
-	if err := pg.SetSetting(authPassKey, string(newHash)); err != nil {
+	res, err := pg.Exec(`UPDATE settings SET value=$1, updated_at=now() WHERE key=$2 AND value=$3`, string(newHash), authPassKey, hash)
+	if err != nil {
 		writeErr(w, 500, "保存失败: "+err.Error())
+		return
+	}
+	if count, err := res.RowsAffected(); err != nil || count != 1 {
+		writeErr(w, 409, "密码已被另一请求修改，请重新登录")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -261,6 +350,11 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/auth/login — validates username/password and returns a JWT.
 func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
+	if allowed, retry := s.loginLimit.allow(r, time.Now()); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		writeErr(w, 429, "登录尝试过于频繁，请稍后重试")
+		return
+	}
 	pg := s.pg(w)
 	if pg == nil {
 		return
@@ -290,7 +384,7 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, "用户名或密码错误")
 		return
 	}
-	tok, err := signJWT(s.jwtKey)
+	tok, err := signJWT(sessionKey(s.jwtKey, hash))
 	if err != nil {
 		writeErr(w, 500, "token 生成失败")
 		return

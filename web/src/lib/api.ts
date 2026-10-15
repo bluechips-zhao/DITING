@@ -3,6 +3,8 @@
 // a few fields the backend serializes differently (e.g. created_at as a unix int)
 // are passed through and formatted at the call site.
 
+import { AuthenticatedEventStream } from "./sse";
+import { auth } from "./auth";
 import type { ChatMention } from "@/lib/chat-mentions";
 import type {
   ActiveFindingRetest,
@@ -99,6 +101,7 @@ import type {
   TrafficHost,
   TrafficResp,
   UpdateCheck,
+  UpdateProgress,
   UsageStats,
   WorkspaceFile,
   WorkspaceListing,
@@ -167,16 +170,21 @@ export async function downloadExport(path:string,fallback:string) {
 // to the Go backend on :8787, whose CORS is open.
 //
 // Override either default with NEXT_PUBLIC_SSE_BASE (set it to "" to force same-origin).
-// Token is appended as ?token= because SSE can't carry cookies cross-origin.
+// Streams use Authorization headers; credentials never appear in the URL.
 export function sseUrl(path: string): string {
-  const base =
-    process.env.NEXT_PUBLIC_SSE_BASE ??
+  const base = process.env.NEXT_PUBLIC_SSE_BASE ??
     (process.env.NODE_ENV !== "production" && typeof window !== "undefined"
-      ? `${window.location.protocol}//${window.location.hostname}:8787`
-      : "");
-  const token = getToken();
-  const sep = path.includes("?") ? "&" : "?";
-  return token ? `${base}${path}${sep}token=${encodeURIComponent(token)}` : `${base}${path}`;
+      ? `${window.location.protocol}//${window.location.hostname}:8787` : "");
+  return `${base}${path}`;
+}
+
+export function openEventStream(url: string) {
+  return new AuthenticatedEventStream(url, {
+    token: () => getToken(),
+    unauthorized: () => {
+      if (typeof window !== "undefined") { auth.clearToken(); window.location.assign("/login"); }
+    },
+  });
 }
 
 const get = <T>(p: string) => http<T>(p);
@@ -217,6 +225,11 @@ function interceptPageQuery(page: number, size: number, filter: InterceptApprova
 export const api = {
   // 后端应用版本号（release 时由 ldflags 注入，默认 "dev"）。
   health: () => get<{ ok: boolean; service: string; version: string }>("/health"),
+  environment: () => get<{
+    environment: { os: string; arch: string; checks: { name: string; ok: boolean; required: boolean; detail: string }[] };
+    database_version: string;
+    credential_key_ready: boolean;
+  }>("/system/environment"),
 
   // ---- auth ----
   authStatus: () => get<{ initialized: boolean }>("/auth/status"),
@@ -1285,6 +1298,7 @@ export const api = {
   // 后端对 GitHub 的查询结果有 30 分钟缓存（未认证的 GitHub API 是 60 次/小时/IP，
   // 顶栏每次整页加载都会查一次，不缓存会很快耗光配额）。force=true 强制回源，
   // 留给用户显式点「检查更新」时用。
+  updateStatus: () => get<{ progress: UpdateProgress; running: boolean }>("/update/status"),
   checkUpdate: (force = false) => get<UpdateCheck>(`/update/check${force ? "?force=1" : ""}`),
   // 202 即返回，实际下载在后台跑，进度走 /api/update/stream。
   applyUpdate: () => post<{ ok: boolean; target: string }>(`/update/apply`),

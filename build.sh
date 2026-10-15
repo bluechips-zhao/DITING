@@ -181,7 +181,13 @@ package_binary() {
     cp start.sh "$package_root/"
     chmod +x "$package_root/start.sh"
   fi
-  cp -R skills "$package_root/"
+  git ls-files -z -- skills > "$package_root/.skill-manifest"
+  while IFS= read -r -d '' skill_file; do
+    case "$skill_file" in */validation-*.json) continue ;; esac
+    mkdir -p "$package_root/$(dirname "$skill_file")"
+    cp "$skill_file" "$package_root/$skill_file"
+  done < "$package_root/.skill-manifest"
+  rm "$package_root/.skill-manifest"
   cp config.example.json "$package_root/"
   cp LICENSE "$package_root/"
   if [ -f THIRD_PARTY_NOTICES.md ]; then cp THIRD_PARTY_NOTICES.md "$package_root/"; fi

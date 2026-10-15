@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { sseUrl } from "@/lib/api";
+import { sseUrl, openEventStream } from "@/lib/api";
 import type { LogLine } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -49,7 +49,7 @@ export default function LogsPage() {
   // Live tail via SSE. on connect, replays whatever is in the ring (includes
   // DB-restored history from the last 100 rows written before restart).
   React.useEffect(() => {
-    const es = new EventSource(sseUrl("/api/logs/stream?since=0"));
+    const es = openEventStream(sseUrl("/api/logs/stream?since=0"));
     es.onmessage = (e) => {
       if (pausedRef.current) return;
       try {

@@ -45,6 +45,7 @@ import {
 import { toast } from "sonner";
 
 import { AssetInterceptRulesEditor } from "@/components/asset-intercept-rules-editor";
+import { LoadError } from "@/components/load-error";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
@@ -305,6 +306,9 @@ function compareTasks(left: Task, right: Task, field: TaskSortField, direction: 
 export default function TasksPage() {
   const [activeTab, setActiveTab] = React.useState("current");
   const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [tasksLoaded, setTasksLoaded] = React.useState(false);
+  const [loadError, setLoadError] = React.useState("");
+  const [categoryError, setCategoryError] = React.useState("");
   const [categories, setCategories] = React.useState<TaskCategory[]>([]);
   const [categoriesLoaded, setCategoriesLoaded] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -457,27 +461,26 @@ export default function TasksPage() {
     api
       .tasks()
       .then((r) => {
+        setTasksLoaded(true);
+        setLoadError("");
         const next = r.tasks.map((t) => (t.id === r.active ? { ...t, active: true } : t));
         const sig = JSON.stringify(next);
         if (sig === lastRef.current) return;
         lastRef.current = sig;
         setTasks(next);
       })
-      .catch(() => {
-        // Polling is best-effort; the next interval retries automatically.
-      });
+      .catch((e) => setLoadError("任务读取失败：" + (e as Error).message));
   }, []);
 
   const loadCategories = React.useCallback(() => {
     api
       .taskCategories()
       .then((next) => {
+        setCategoryError("");
         setCategories(next);
         setCategoriesLoaded(true);
       })
-      .catch(() => {
-        // Category management remains retryable without blocking the task list.
-      });
+      .catch((e) => setCategoryError("分类读取失败：" + (e as Error).message));
   }, []);
 
   React.useEffect(() => {
@@ -912,7 +915,11 @@ export default function TasksPage() {
               />
             </div>
 
-            {tasks.length === 0 ? (
+            {loadError && <LoadError message={loadError + (tasksLoaded ? "。保留上次成功读取的列表。" : "")} retry={load} />}
+            {categoryError && <LoadError message={categoryError} retry={loadCategories} />}
+            {!tasksLoaded ? (
+              !loadError && <p role="status" className="p-10 text-center text-sm text-muted-foreground">正在读取任务…</p>
+            ) : tasks.length === 0 ? (
               <div className="text-muted-foreground mx-4 flex items-center justify-center rounded-lg border border-dashed py-20 text-sm lg:mx-6">
                 暂无任务，点击右上角「新建任务」开始。
               </div>

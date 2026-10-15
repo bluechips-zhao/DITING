@@ -79,12 +79,17 @@ type NotificationEvent struct {
 
 const notificationChannelCols = `id, name, kind, enabled, config, mode, filter, rate_per_min, created_at, updated_at`
 
-func scanNotificationChannel(sc interface{ Scan(...any) error }) (*NotificationChannel, error) {
+func (d *DB) scanNotificationChannel(sc interface{ Scan(...any) error }) (*NotificationChannel, error) {
 	var c NotificationChannel
 	var enabled bool
 	if err := sc.Scan(&c.ID, &c.Name, &c.Kind, &enabled, &c.Config, &c.Mode, &c.Filter, &c.RatePerMin, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
 	}
+	value, err := d.reveal("notification_channels.config", string(c.Config), true)
+	if err != nil {
+		return nil, err
+	}
+	c.Config = json.RawMessage(value)
 	c.Enabled = &enabled
 	return &c, nil
 }
@@ -100,7 +105,7 @@ ORDER BY enabled DESC, id`)
 	defer rows.Close()
 	out := []*NotificationChannel{}
 	for rows.Next() {
-		c, err := scanNotificationChannel(rows)
+		c, err := d.scanNotificationChannel(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +117,7 @@ ORDER BY enabled DESC, id`)
 // NotificationChannelByID 取单个渠道。
 func (d *DB) NotificationChannelByID(ctx context.Context, id int64) (*NotificationChannel, error) {
 	row := d.QueryRowContext(ctx, `SELECT `+notificationChannelCols+` FROM notification_channels WHERE id=$1`, id)
-	c, err := scanNotificationChannel(row)
+	c, err := d.scanNotificationChannel(row)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotificationChannelNotFound
 	}
@@ -146,19 +151,23 @@ func (d *DB) SaveNotificationChannel(ctx context.Context, c *NotificationChannel
 	if c.Filter == nil {
 		c.Filter = json.RawMessage(`{}`)
 	}
+	storedConfig, err := d.protect("notification_channels.config", string(c.Config), true)
+	if err != nil {
+		return 0, err
+	}
 	enabled := c.IsEnabled()
 
 	if c.ID == 0 {
 		var id int64
 		err := d.QueryRowContext(ctx, `INSERT INTO notification_channels(name,kind,enabled,config,mode,filter,rate_per_min)
 VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-			c.Name, c.Kind, enabled, string(c.Config), c.Mode, string(c.Filter), c.RatePerMin).Scan(&id)
+			c.Name, c.Kind, enabled, storedConfig, c.Mode, string(c.Filter), c.RatePerMin).Scan(&id)
 		return id, err
 	}
 	res, err := d.ExecContext(ctx, `UPDATE notification_channels
 SET name=$2, kind=$3, enabled=$4, config=$5, mode=$6, filter=$7, rate_per_min=$8
 WHERE id=$1`,
-		c.ID, c.Name, c.Kind, enabled, string(c.Config), c.Mode, string(c.Filter), c.RatePerMin)
+		c.ID, c.Name, c.Kind, enabled, storedConfig, c.Mode, string(c.Filter), c.RatePerMin)
 	if err != nil {
 		return 0, err
 	}
@@ -282,7 +291,7 @@ func (d *DB) FanOutPendingEvents(ctx context.Context, limit int) (eventCount, de
 	}
 	defer tx.Rollback() //nolint:errcheck // 提交成功后是 no-op
 
-	channels, err := listEnabledNotificationChannelsTx(ctx, tx)
+	channels, err := d.listEnabledNotificationChannelsTx(ctx, tx)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -361,7 +370,7 @@ WHERE NOT fanned_out ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1`, limit)
 
 // listEnabledNotificationChannelsTx 在事务里取启用中的渠道。数量很少，
 // 不做分页也不加缓存——缓存会引入「改了配置何时生效」这个额外的时序问题。
-func listEnabledNotificationChannelsTx(ctx context.Context, tx *sql.Tx) ([]*NotificationChannel, error) {
+func (d *DB) listEnabledNotificationChannelsTx(ctx context.Context, tx *sql.Tx) ([]*NotificationChannel, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, config, mode, filter, rate_per_min
 FROM notification_channels WHERE enabled ORDER BY id`)
 	if err != nil {
@@ -374,6 +383,11 @@ FROM notification_channels WHERE enabled ORDER BY id`)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Config, &c.Mode, &c.Filter, &c.RatePerMin); err != nil {
 			return nil, err
 		}
+		value, err := d.reveal("notification_channels.config", string(c.Config), true)
+		if err != nil {
+			return nil, err
+		}
+		c.Config = json.RawMessage(value)
 		out = append(out, &c)
 	}
 	return out, rows.Err()

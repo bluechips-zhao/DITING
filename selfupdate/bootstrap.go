@@ -244,6 +244,10 @@ func Rollback() error {
 	if err != nil {
 		return err
 	}
+	return manualRollback(p)
+}
+
+func manualRollback(p Paths) error {
 	if _, err := os.Stat(p.Old); err != nil {
 		return errors.New("没有可回滚的上一版本（" + p.Old + " 不存在）")
 	}

@@ -49,7 +49,7 @@ export default function SetupPage() {
     try {
       const { token } = await api.initPassword(password);
       auth.setToken(token);
-      router.replace("/function/tasks");
+      router.replace("/system/setup");
     } catch (err) {
       setError(err instanceof Error ? err.message : "初始化失败");
     } finally {

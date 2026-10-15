@@ -94,6 +94,20 @@ func scanProfile(sc interface{ Scan(...any) error }, into *string, p *LLMProfile
 		&p.Retry.Stream.Attempts, &p.Retry.Stream.IntervalMS)
 }
 
+func (d *DB) revealProfile(p *LLMProfile) error {
+	var err error
+	p.APIKey, err = d.reveal("llm_profiles.api_key", p.APIKey, false)
+	if err != nil {
+		return err
+	}
+	p.Proxy, err = d.reveal("llm_profiles.proxy", p.Proxy, false)
+	if err != nil {
+		return err
+	}
+	p.BaseURL, err = d.reveal("llm_profiles.base_url", p.BaseURL, false)
+	return err
+}
+
 func (d *DB) ListProfiles() ([]*LLMProfile, error) {
 	rows, err := d.Query(`SELECT ` + profileCols + ` FROM llm_profiles ORDER BY id`)
 	if err != nil {
@@ -104,6 +118,9 @@ func (d *DB) ListProfiles() ([]*LLMProfile, error) {
 	for rows.Next() {
 		var p LLMProfile
 		if err := scanProfile(rows, &p.APIKeyHint, &p); err != nil {
+			return nil, err
+		}
+		if err := d.revealProfile(&p); err != nil {
 			return nil, err
 		}
 		out = append(out, &p)
@@ -118,6 +135,9 @@ func (d *DB) ActiveProfile() (*LLMProfile, error) {
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
+	if err == nil {
+		err = d.revealProfile(&p)
+	}
 	return &p, err
 }
 
@@ -128,6 +148,9 @@ func (d *DB) ProfileByID(id int64) (*LLMProfile, error) {
 	err := scanProfile(d.QueryRow(`SELECT `+profileColsKey+` FROM llm_profiles WHERE id=$1`, id), &p.APIKey, &p)
 	if err == sql.ErrNoRows {
 		return nil, nil
+	}
+	if err == nil {
+		err = d.revealProfile(&p)
 	}
 	return &p, err
 }
@@ -151,6 +174,9 @@ ORDER BY is_default DESC, priority DESC, id ASC`)
 		if err := scanProfile(rows, &p.APIKey, &p); err != nil {
 			return nil, err
 		}
+		if err := d.revealProfile(&p); err != nil {
+			return nil, err
+		}
 		out = append(out, &p)
 	}
 	return out, rows.Err()
@@ -162,23 +188,35 @@ func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 	if len(p.APIKey) >= 4 {
 		hint = "…" + p.APIKey[len(p.APIKey)-4:]
 	}
+	storedKey, err := d.protect("llm_profiles.api_key", p.APIKey, false)
+	if err != nil {
+		return 0, err
+	}
+	storedProxy, err := d.protect("llm_profiles.proxy", p.Proxy, false)
+	if err != nil {
+		return 0, err
+	}
+	storedURL, err := d.protect("llm_profiles.base_url", p.BaseURL, false)
+	if err != nil {
+		return 0, err
+	}
 	r := p.Retry.Clamped()
 	if p.ID == 0 {
 		var id int64
 		err := d.QueryRow(`INSERT INTO llm_profiles(name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms)
 VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING id`,
-			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
+			p.Name, p.Format, storedURL, storedProxy, p.Model, storedKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS).Scan(&id)
 		return id, err
 	}
 	if p.APIKey == "" {
-		_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,rate_per_second=$6,rate_per_minute=$7,context_window_k=$8,reasoning_effort=$9,priority=$10,pool_exclude=$11,thinking_type=$12,streaming=$13,max_tokens=$14,max_tokens_field=$15,session_header_key=$16,retry_connect_attempts=$17,retry_connect_interval_ms=$18,retry_empty_attempts=$19,retry_empty_interval_ms=$20,retry_stream_attempts=$21,retry_stream_interval_ms=$22 WHERE id=$23`,
-			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
+		_, err = d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,rate_per_second=$6,rate_per_minute=$7,context_window_k=$8,reasoning_effort=$9,priority=$10,pool_exclude=$11,thinking_type=$12,streaming=$13,max_tokens=$14,max_tokens_field=$15,session_header_key=$16,retry_connect_attempts=$17,retry_connect_interval_ms=$18,retry_empty_attempts=$19,retry_empty_interval_ms=$20,retry_stream_attempts=$21,retry_stream_interval_ms=$22 WHERE id=$23`,
+			p.Name, p.Format, storedURL, storedProxy, p.Model, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.ID)
 		return p.ID, err
 	}
-	_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,api_key=$6,api_key_hint=$7,rate_per_second=$8,rate_per_minute=$9,context_window_k=$10,reasoning_effort=$11,priority=$12,pool_exclude=$13,thinking_type=$14,streaming=$15,max_tokens=$16,max_tokens_field=$17,session_header_key=$18,retry_connect_attempts=$19,retry_connect_interval_ms=$20,retry_empty_attempts=$21,retry_empty_interval_ms=$22,retry_stream_attempts=$23,retry_stream_interval_ms=$24 WHERE id=$25`,
-		p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
+	_, err = d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,api_key=$6,api_key_hint=$7,rate_per_second=$8,rate_per_minute=$9,context_window_k=$10,reasoning_effort=$11,priority=$12,pool_exclude=$13,thinking_type=$14,streaming=$15,max_tokens=$16,max_tokens_field=$17,session_header_key=$18,retry_connect_attempts=$19,retry_connect_interval_ms=$20,retry_empty_attempts=$21,retry_empty_interval_ms=$22,retry_stream_attempts=$23,retry_stream_interval_ms=$24 WHERE id=$25`,
+		p.Name, p.Format, storedURL, storedProxy, p.Model, storedKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 		r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.ID)
 	return p.ID, err
 }
@@ -815,7 +853,7 @@ type MCPServer struct {
 	Env       json.RawMessage `json:"env"`
 	URL       string          `json:"url,omitempty"`
 	Enabled   bool            `json:"enabled"`
-	Insecure  bool            `json:"insecure"` // http: skip TLS cert verification (self-signed servers, issue #108)
+	Insecure  bool            `json:"insecure"`        // http: skip TLS cert verification (self-signed servers, issue #108)
 	Tools     []string        `json:"tools,omitempty"` // cached tool names (mcp_tools_cache)
 }
 
@@ -832,7 +870,22 @@ func (d *DB) ListMCP() ([]*MCPServer, error) {
 			rows.Close()
 			return nil, err
 		}
-		m.Args, m.Env = json.RawMessage(args), json.RawMessage(env)
+		plainArgs, err := d.reveal("mcp_servers.args", string(args), true)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		plainEnv, err := d.reveal("mcp_servers.env", string(env), true)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		m.URL, err = d.reveal("mcp_servers.url", m.URL, false)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		m.Args, m.Env = json.RawMessage(plainArgs), json.RawMessage(plainEnv)
 		out = append(out, &m)
 	}
 	if err := rows.Err(); err != nil {
@@ -916,14 +969,27 @@ func (d *DB) SaveMCP(m *MCPServer) (int64, error) {
 	if env == "" {
 		env = "{}"
 	}
+	var err error
+	args, err = d.protect("mcp_servers.args", args, true)
+	if err != nil {
+		return 0, err
+	}
+	env, err = d.protect("mcp_servers.env", env, true)
+	if err != nil {
+		return 0, err
+	}
+	url, err := d.protect("mcp_servers.url", m.URL, false)
+	if err != nil {
+		return 0, err
+	}
 	if m.ID == 0 {
 		var id int64
 		err := d.QueryRow(`INSERT INTO mcp_servers(name,transport,command,args,env,url,enabled,insecure) VALUES ($1,$2,NULLIF($3,''),$4,$5,NULLIF($6,''),$7,$8) RETURNING id`,
-			m.Name, m.Transport, m.Command, args, env, m.URL, m.Enabled, m.Insecure).Scan(&id)
+			m.Name, m.Transport, m.Command, args, env, url, m.Enabled, m.Insecure).Scan(&id)
 		return id, err
 	}
-	_, err := d.Exec(`UPDATE mcp_servers SET name=$1,transport=$2,command=NULLIF($3,''),args=$4,env=$5,url=NULLIF($6,''),enabled=$7,insecure=$8 WHERE id=$9`,
-		m.Name, m.Transport, m.Command, args, env, m.URL, m.Enabled, m.Insecure, m.ID)
+	_, err = d.Exec(`UPDATE mcp_servers SET name=$1,transport=$2,command=NULLIF($3,''),args=$4,env=$5,url=NULLIF($6,''),enabled=$7,insecure=$8 WHERE id=$9`,
+		m.Name, m.Transport, m.Command, args, env, url, m.Enabled, m.Insecure, m.ID)
 	return m.ID, err
 }
 

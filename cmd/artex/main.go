@@ -1,4 +1,4 @@
-// Command artex runs the ARTEX backend: the dual SQLite graph stores,
+// Command artex runs the DITING backend: PostgreSQL stores,
 // the event-driven exploration engine, and the JSON HTTP API consumed by the
 // shadcn/ui frontend.
 package main
@@ -13,10 +13,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Autumn-27/artex/agent"
+	"github.com/Autumn-27/artex/bootstrap"
 	"github.com/Autumn-27/artex/config"
 	"github.com/Autumn-27/artex/selfupdate"
 	"github.com/Autumn-27/artex/server"
@@ -52,8 +54,8 @@ func main() {
 
 func run() int {
 	var (
-		addr    = flag.String("addr", ":8787", "HTTP listen address")
-		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
+		addr    = flag.String("addr", "127.0.0.1:8787", "HTTP listen address")
+		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "workspace data directory (default: data/ next to the executable)")
 		proxy   = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
 	)
 	flag.Parse()
@@ -94,8 +96,19 @@ func run() int {
 	defer stop()
 	ctx, shutdown := shutdownContext(sigCtx)
 	defer shutdown(agent.AbortShutdown)
+	dsn, _, _ := config.PostgresDSN()
+	if err := bootstrap.EnsureDatabase(ctx, *addr, bootstrap.Options{
+		ConfigPath: cfgPath, DataDir: *dataDir, KeyDir: config.BaseDir(),
+		ExistingDSN: dsn, EnvironmentDSN: strings.TrimSpace(os.Getenv("ARTEX_PG_DSN")) != "",
+	}); err != nil {
+		if ctx.Err() != nil {
+			return 0
+		}
+		log.Printf("[setup] %v", err)
+		return 1
+	}
 
-	mgr, err := server.NewManager(*dataDir, *proxy)
+	mgr, err := server.NewManager(*dataDir, *proxy, config.BaseDir())
 	if err != nil {
 		log.Fatalf("open stores: %v", err)
 	}

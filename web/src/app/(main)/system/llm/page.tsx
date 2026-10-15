@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { LoadError } from "@/components/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -787,6 +788,9 @@ function ProfileSheet({
 
 export default function LLMPage() {
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [loadError, setLoadError] = React.useState("");
+  const [poolError, setPoolError] = React.useState("");
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
   // 抽屉的开关和内容分开存：关闭时 editing 保持不变，否则关闭动画期间标题会从
@@ -801,16 +805,19 @@ export default function LLMPage() {
   const loadPool = React.useCallback(async () => {
     try {
       setPool(await api.llmPool());
-    } catch {
-      /* ignore */
+      setPoolError("");
+    } catch (e) {
+      setPoolError("模型池状态读取失败：" + (e as Error).message);
     }
   }, []);
 
   const load = React.useCallback(async () => {
     try {
       setProfiles(await api.llmProfiles());
-    } catch {
-      /* ignore */
+      setLoaded(true);
+      setLoadError("");
+    } catch (e) {
+      setLoadError("模型配置读取失败：" + (e as Error).message);
     }
     await loadPool();
   }, [loadPool]);
@@ -970,7 +977,10 @@ export default function LLMPage() {
                 </Card>
               );
             })}
-            {profiles.length === 0 && (
+            {loadError && <LoadError message={loadError} retry={() => void load()} />}
+            {poolError && <LoadError message={poolError} retry={() => void loadPool()} />}
+            {!loaded && !loadError && <p role="status" className="p-10 text-sm text-muted-foreground">正在读取模型配置…</p>}
+            {loaded && !loadError && profiles.length === 0 && (
               <div className="col-span-full rounded-lg border border-dashed p-10 text-center text-muted-foreground text-sm">
                 还没有模型配置，点击右上角「新建」创建第一个。
               </div>

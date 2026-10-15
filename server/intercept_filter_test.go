@@ -23,7 +23,7 @@ func TestInterceptFilterHTTP(t *testing.T) {
 	m := &Manager{pg: d, interceptor: intercept.New(d)}
 	s := &Server{m: m, jwtKey: []byte("approval-filter-test-key")}
 	h := s.Handler()
-	token, err := signJWT(s.jwtKey)
+	token, err := s.issueToken()
 	if err != nil {
 		t.Fatal(err)
 	}

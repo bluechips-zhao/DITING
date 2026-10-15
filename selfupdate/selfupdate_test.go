@@ -2,8 +2,10 @@ package selfupdate
 
 import (
 	"archive/zip"
+	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,12 +17,16 @@ import (
 func testPaths(t *testing.T) Paths {
 	t.Helper()
 	dir := t.TempDir()
+	ext := ""
+	if runtime.GOOS == "windows" {
+		ext = ".exe"
+	}
 	return Paths{
 		Dir:     dir,
-		Current: filepath.Join(dir, "artex"),
-		New:     filepath.Join(dir, "artex.new"),
-		Sum:     filepath.Join(dir, "artex.new.sha256"),
-		Old:     filepath.Join(dir, "artex.old"),
+		Current: filepath.Join(dir, "artex"+ext),
+		New:     filepath.Join(dir, "artex.new"+ext),
+		Sum:     filepath.Join(dir, "artex.new"+ext+".sha256"),
+		Old:     filepath.Join(dir, "artex.old"+ext),
 		Marker:  filepath.Join(dir, "artex.upgrade.json"),
 	}
 }
@@ -29,6 +35,18 @@ func testPaths(t *testing.T) Paths {
 // 脚本完全够用，而且比编译一个真二进制快得多。
 func fakeBin(t *testing.T, path, marker string, exitCode int) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		source := filepath.Join(t.TempDir(), "main.go")
+		body := fmt.Sprintf("package main\nimport (\"fmt\"; \"os\")\nfunc main() { fmt.Print(%q); os.Exit(%d) }", marker, exitCode)
+		if err := os.WriteFile(source, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("go", "build", "-o", path, source)
+		if out, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("build fixture: %v: %s", err, out)
+		}
+		return
+	}
 	script := "#!/bin/sh\necho " + marker + "\nexit " + itoa(exitCode) + "\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("写入假二进制 %s: %v", path, err)
@@ -62,13 +80,6 @@ func readAll(t *testing.T, path string) string {
 		t.Fatalf("读取 %s: %v", path, err)
 	}
 	return string(b)
-}
-
-func requireUnix(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("假二进制用的是 sh 脚本，Windows 上跑不了")
-	}
 }
 
 func TestCompareVersions(t *testing.T) {
@@ -124,7 +135,6 @@ func TestResolvePathsNaming(t *testing.T) {
 }
 
 func TestVerifyStagedRejectsTamperedBinary(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	stage(t, p, "new", 0)
 
@@ -136,7 +146,6 @@ func TestVerifyStagedRejectsTamperedBinary(t *testing.T) {
 }
 
 func TestVerifyStagedRejectsUnrunnableBinary(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	stage(t, p, "broken", 1) // 能执行但退出码非 0
 
@@ -146,7 +155,6 @@ func TestVerifyStagedRejectsUnrunnableBinary(t *testing.T) {
 }
 
 func TestApplyStagedHappyPath(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "old", 0)
 	stage(t, p, "new", 0)
@@ -180,7 +188,6 @@ func TestApplyStagedHappyPath(t *testing.T) {
 }
 
 func TestApplyStagedKeepsCurrentWhenVerifyFails(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "old", 0)
 	stage(t, p, "new", 0)
@@ -202,7 +209,6 @@ func TestApplyStagedKeepsCurrentWhenVerifyFails(t *testing.T) {
 }
 
 func TestSwapOverwritesPreviousBackup(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "v2", 0)
 	fakeBin(t, p.Old, "v1", 0) // 上一轮升级留下的备份
@@ -220,7 +226,6 @@ func TestSwapOverwritesPreviousBackup(t *testing.T) {
 }
 
 func TestConfirmCountsAttemptsThenRollsBack(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "broken-new", 0)
 	fakeBin(t, p.Old, "good-old", 0)
@@ -263,20 +268,11 @@ func TestConfirmCountsAttemptsThenRollsBack(t *testing.T) {
 }
 
 func TestManualRollbackIsReversible(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "v2", 0)
 	fakeBin(t, p.Old, "v1", 0)
 
-	// Rollback() 走 ResolvePaths()，这里直接测底层的交换语义。
-	tmp := p.Current + ".swap"
-	if err := os.Rename(p.Current, tmp); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(p.Old, p.Current); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(tmp, p.Old); err != nil {
+	if err := manualRollback(p); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(readAll(t, p.Current), "v1") {
@@ -425,7 +421,6 @@ func mustParse(t *testing.T, raw string) *url.URL {
 }
 
 func TestSettleClearsMarkerAndStopsRollback(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "new", 0)
 	fakeBin(t, p.Old, "old", 0)
@@ -449,7 +444,6 @@ func TestSettleClearsMarkerAndStopsRollback(t *testing.T) {
 }
 
 func TestSettleIsNoopWithoutMarker(t *testing.T) {
-	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "cur", 0)
 	settle(p) // 普通启动路径，不该 panic 也不该动任何文件

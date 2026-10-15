@@ -10,6 +10,8 @@ param(
  [string]$SkillsDir='',
  [string]$ConfigFile='',
  [string]$SigningKey='',
+ [string]$EncryptionKey='',
+ [switch]$KeyStoredSeparately,
  [string]$DestinationDir='',
  [switch]$IncludeLocalCredentials,
  [switch]$OfflineAcknowledged,
@@ -86,6 +88,29 @@ function Add-File([IO.Compression.ZipArchive]$archive,[string]$path,[string]$nam
  $after=Get-Item -LiteralPath $path;if($after.Length -ne $before.Length -or $after.LastWriteTimeUtc -ne $before.LastWriteTimeUtc){throw "File changed during backup: $name"}
  return @{path=$name;bytes=$length;sha256=$digest}
 }
+function Assert-CredentialKey([byte[]]$key){
+ if($key.Length -ne 32){throw 'Invalid encryption key length; backup refused.'}
+ $query=@"
+SELECT COALESCE(json_agg(c),'[]'::json)::text FROM (
+ SELECT 'llm_profiles.api_key' AS scope, api_key AS value FROM llm_profiles
+ UNION ALL SELECT 'llm_profiles.proxy', proxy FROM llm_profiles
+ UNION ALL SELECT 'llm_profiles.base_url', base_url FROM llm_profiles
+ UNION ALL SELECT 'settings.'||key, value FROM settings WHERE key IN ('brave_search_api_key','tavily_search_api_key','global_proxy','web_search_proxy')
+ UNION ALL SELECT 'notification_channels.config', config->>'_diting_secret_v1' FROM notification_channels
+ UNION ALL SELECT 'mcp_servers.args', args->>'_diting_secret_v1' FROM mcp_servers
+ UNION ALL SELECT 'mcp_servers.env', env->>'_diting_secret_v1' FROM mcp_servers
+ UNION ALL SELECT 'mcp_servers.url', url FROM mcp_servers
+) c WHERE value LIKE 'diting:v1:%';
+"@
+ $items=(Invoke-Pg 'psql' $DsnEnv @('-X','-A','-t','-v','ON_ERROR_STOP=1','-c',$query))|ConvertFrom-Json
+ $aes=[Security.Cryptography.AesGcm]::new($key,16)
+ try{foreach($item in $items){
+  $encoded=$item.value.Substring(10);$encoded=$encoded.PadRight($encoded.Length+((4-$encoded.Length%4)%4),'=')
+  $sealed=[Convert]::FromBase64String($encoded);if($sealed.Length -lt 28){throw 'Invalid credential ciphertext.'}
+  $plain=[byte[]]::new($sealed.Length-28)
+  try{$aes.Decrypt($sealed[0..11],$sealed[12..($sealed.Length-17)],$sealed[($sealed.Length-16)..($sealed.Length-1)],$plain,[Text.Encoding]::UTF8.GetBytes($item.scope))}finally{[Array]::Clear($plain,0,$plain.Length)}
+ }}catch{throw 'Credential key does not match the database, or ciphertext is damaged; backup refused.'}finally{$aes.Dispose()}
+}
 function Add-Tree([IO.Compression.ZipArchive]$archive,[string]$directory,[string]$prefix){
  $root=[IO.Path]::GetFullPath($directory);if(!(Test-Path -LiteralPath $root -PathType Container)){throw "Missing source directory: $prefix"}
  if(((Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw "Refusing linked source root: $prefix"}
@@ -97,7 +122,7 @@ function Verify-Archive([IO.Compression.ZipArchive]$archive){
  if($manifest.format_version -ne 1 -or $manifest.consistency -ne 'offline_user_asserted'){throw 'Unsupported manifest.'}
  $entries=@{};$total=0L
  foreach($entry in $archive.Entries){if($entries.ContainsKey($entry.FullName)){throw 'Duplicate archive entry.'};$entries[$entry.FullName]=$entry
-  if($entry.FullName -match '\\|(^|/)\.\.?(/|$)|:' -or $entry.FullName.StartsWith('/') -or $entry.FullName -notmatch '^(database\.dump|manifest\.json|data/|skills/|local/config\.json$|local/jwt\.key$)'){throw 'Unsafe archive path.'}
+  if($entry.FullName -match '\\|(^|/)\.\.?(/|$)|:' -or $entry.FullName.StartsWith('/') -or $entry.FullName -notmatch '^(database\.dump|manifest\.json|data/|skills/|local/config\.json$|local/jwt\.key$|local/secrets\.key$)'){throw 'Unsafe archive path.'}
   $total+=$entry.Length;if($total -gt $MaxRestoreBytes){throw 'Expanded package exceeds size limit.'}
  }
  if($entries.Count -ne @($manifest.files).Count+1){throw 'Manifest inventory mismatch.'}
@@ -111,14 +136,18 @@ try{
   if(Test-Path -LiteralPath $packagePath){throw 'Output package exists; choose a new filename.'}
   if(!$DataDir){throw 'DataDir is required.'}
   foreach($root in @($DataDir,$SkillsDir)|Where-Object{$_}){$absolute=[IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar;if($packagePath.StartsWith($absolute,[StringComparison]::OrdinalIgnoreCase)){throw 'Package must be outside source directories.'}}
+  $hasEncryptedCredentials=(Invoke-Pg 'psql' $DsnEnv @('-X','-A','-t','-v','ON_ERROR_STOP=1','-c',"SELECT EXISTS(SELECT 1 FROM llm_profiles WHERE api_key LIKE 'diting:v1:%' OR proxy LIKE 'diting:v1:%' OR base_url LIKE 'diting:v1:%' UNION ALL SELECT 1 FROM settings WHERE value LIKE 'diting:v1:%' UNION ALL SELECT 1 FROM notification_channels WHERE config ? '_diting_secret_v1' UNION ALL SELECT 1 FROM mcp_servers WHERE env ? '_diting_secret_v1' OR args ? '_diting_secret_v1' OR url LIKE 'diting:v1:%');")) -eq 't'
+  if($EncryptionKey -and !$IncludeLocalCredentials){throw 'EncryptionKey requires -IncludeLocalCredentials so key inclusion is explicit.'}
+  if($hasEncryptedCredentials -and !($IncludeLocalCredentials -and $EncryptionKey) -and !$KeyStoredSeparately){throw 'Encrypted credentials require the original secrets.key. Supply -IncludeLocalCredentials -EncryptionKey, or explicitly use -KeyStoredSeparately when the key is backed up independently.'}
+  if($EncryptionKey){Assert-CredentialKey ([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($EncryptionKey)))}
   $dump=Join-Path $stage 'database.dump';[void](Invoke-Pg 'pg_dump' $DsnEnv @('--format=custom','--no-owner','--file',$dump))
   $zipPath=Join-Path $stage 'snapshot.zip';$zipStream=[IO.File]::Open($zipPath,[IO.FileMode]::CreateNew);$archive=[IO.Compression.ZipArchive]::new($zipStream,[IO.Compression.ZipArchiveMode]::Create)
   try{
    $files=@((Add-File $archive $dump 'database.dump'));$files+=@(Add-Tree $archive $DataDir 'data');if($SkillsDir){$files+=@(Add-Tree $archive $SkillsDir 'skills')}
-   if($IncludeLocalCredentials){if($ConfigFile){$files+=Add-File $archive ([IO.Path]::GetFullPath($ConfigFile)) 'local/config.json'};if($SigningKey){$files+=Add-File $archive ([IO.Path]::GetFullPath($SigningKey)) 'local/jwt.key'}}
+   if($IncludeLocalCredentials){if($ConfigFile){$files+=Add-File $archive ([IO.Path]::GetFullPath($ConfigFile)) 'local/config.json'};if($SigningKey){$files+=Add-File $archive ([IO.Path]::GetFullPath($SigningKey)) 'local/jwt.key'};if($EncryptionKey){$files+=Add-File $archive ([IO.Path]::GetFullPath($EncryptionKey)) 'local/secrets.key'}}
    $schemaFile=Join-Path $PSScriptRoot '../db/schema.sql'
    $schemaHash=if(Test-Path -LiteralPath $schemaFile){(Get-FileHash -LiteralPath $schemaFile -Algorithm SHA256).Hash}else{'unavailable'}
-   $manifest=@{format_version=1;application='DITING';schema_sha256=$schemaHash;created_at=[DateTimeOffset]::UtcNow.ToString('o');consistency='offline_user_asserted';database='complete PostgreSQL custom dump';credentials='Database includes stored credentials; whole package encrypted. Local config/signing key included only on explicit selection.';local_credentials_selected=[bool]$IncludeLocalCredentials;files=$files}
+   $manifest=@{format_version=1;application='DITING';schema_sha256=$schemaHash;created_at=[DateTimeOffset]::UtcNow.ToString('o');consistency='offline_user_asserted';database='complete PostgreSQL custom dump';credentials='Database includes stored credentials; whole package encrypted. Local config and signing/encryption keys included only on explicit selection.';credential_key_required=[bool]$hasEncryptedCredentials;encryption_key_included=[bool]($IncludeLocalCredentials -and $EncryptionKey);key_stored_separately=[bool]$KeyStoredSeparately;local_credentials_selected=[bool]$IncludeLocalCredentials;files=$files}
    $entry=$archive.CreateEntry('manifest.json');$writer=[IO.StreamWriter]::new($entry.Open(),[Text.UTF8Encoding]::new($false));try{$writer.Write(($manifest|ConvertTo-Json -Depth 8))}finally{$writer.Dispose()}
   }finally{$archive.Dispose();$zipStream.Dispose()}
   $tempPackage=$packagePath+'.partial-'+[guid]::NewGuid().ToString('N');Protect-Archive $zipPath $tempPackage;Move-Item -LiteralPath $tempPackage -Destination $packagePath
@@ -127,7 +156,7 @@ try{
   $zipPath=Join-Path $stage 'verified.zip';Unprotect-Archive $packagePath $zipPath;$archive=[IO.Compression.ZipFile]::OpenRead($zipPath)
   try{
    $manifest=Verify-Archive $archive
-   if($Mode -eq 'Preview'){Write-Output ([pscustomobject]@{mode='Preview';verified=$true;files=@($manifest.files).Count;inventory=$manifest.files;schema_sha256=$manifest.schema_sha256;bytes=($manifest.files|Measure-Object bytes -Sum).Sum;database=$manifest.database;local_credentials=$manifest.local_credentials_selected;restore_policy='New empty database and new empty destination directory only. No overwrite.'});return}
+   if($Mode -eq 'Preview'){Write-Output ([pscustomobject]@{mode='Preview';verified=$true;files=@($manifest.files).Count;inventory=$manifest.files;schema_sha256=$manifest.schema_sha256;bytes=($manifest.files|Measure-Object bytes -Sum).Sum;database=$manifest.database;local_credentials=$manifest.local_credentials_selected;credential_key_required=$manifest.credential_key_required;encryption_key_included=$manifest.encryption_key_included;restore_policy='New empty database and new empty destination directory only. No overwrite.'});return}
    if(!$OfflineAcknowledged){throw 'Restore requires the destination service to be stopped and -OfflineAcknowledged.'}
    if(!$DestinationDir){throw 'DestinationDir is required.'};$destination=[IO.Path]::GetFullPath($DestinationDir)
    if(Test-Path -LiteralPath $destination){throw 'Destination directory must not exist; existing files are never overwritten.'}

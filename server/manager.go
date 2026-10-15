@@ -341,7 +341,7 @@ func (m *Manager) Enrich() *enrich.Engine { return m.enrich }
 
 // NewManager connects to PostgreSQL and, if proxyAddr is non-empty, starts the
 // traffic-recording proxy. PostgreSQL is required (it is the single data source).
-func NewManager(dir, proxyAddr string) (*Manager, error) {
+func NewManager(dir, proxyAddr string, keyDirs ...string) (*Manager, error) {
 	// Resolve the data dir to an ABSOLUTE path up front. Every data path derives
 	// from it — notably the MITM CA cert, whose path is injected into worker shells
 	// (SSL_CERT_FILE/CURL_CA_BUNDLE) and read by WebFetch. A relative path (the
@@ -362,6 +362,36 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	pg, err := pgdb.Open(dsn)
 	if err != nil {
 		return nil, err
+	}
+	if len(keyDirs) > 0 {
+		keyDir, err := filepath.Abs(keyDirs[0])
+		if err != nil {
+			pg.Close()
+			return nil, err
+		}
+		keyFile := filepath.Join(keyDir, "secrets.key")
+		if err := os.MkdirAll(keyDir, 0700); err != nil {
+			pg.Close()
+			return nil, err
+		}
+		// Compare resolved directories so a workspace link cannot expose the key.
+		resolvedData, dataErr := filepath.EvalSymlinks(dir)
+		resolvedKeyDir, keyErr := filepath.EvalSymlinks(keyDir)
+		if dataErr != nil || keyErr != nil {
+			pg.Close()
+			return nil, fmt.Errorf("resolve credential directory: %v / %v", dataErr, keyErr)
+		}
+		// Different Windows volumes cannot contain one another.
+		if strings.EqualFold(filepath.VolumeName(resolvedData), filepath.VolumeName(resolvedKeyDir)) {
+			if rel, err := filepath.Rel(resolvedData, filepath.Join(resolvedKeyDir, "secrets.key")); err != nil || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+				pg.Close()
+				return nil, fmt.Errorf("credential key must be outside the browsable workspace")
+			}
+		}
+		if err := pg.ConfigureSecrets(keyFile); err != nil {
+			pg.Close()
+			return nil, fmt.Errorf("credential storage: %w", err)
+		}
 	}
 	if err := pg.RecoverFindingRetests(); err != nil {
 		pg.Close()

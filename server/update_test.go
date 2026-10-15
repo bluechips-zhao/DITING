@@ -2,13 +2,37 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/Autumn-27/artex/selfupdate"
 )
+
+func TestUpdateStatusRecoversMissedTerminalProgress(t *testing.T) {
+	previous := updHub
+	defer func() { updHub = previous }()
+	updHub = &updateHub{subs: map[chan updateProgress]struct{}{}}
+	if !updHub.begin("2.3.1") {
+		t.Fatal("begin failed")
+	}
+	updHub.finish(errors.New("checksum mismatch"))
+	w := httptest.NewRecorder()
+	(&Server{}).updateStatus(w, httptest.NewRequest("GET", "/api/update/status", nil))
+	var result struct {
+		Progress updateProgress `json:"progress"`
+		Running  bool           `json:"running"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || result.Running || result.Progress.Phase != selfupdate.PhaseFailed || result.Progress.Error != "checksum mismatch" {
+		t.Fatalf("lost terminal progress: %s", w.Body.String())
+	}
+}
 
 // releaseCache 是保护 GitHub 配额的那一层：未认证的 API 只有 60 次/小时/IP，
 // 而顶栏的"有新版本"提示每次整页加载都会查一次。缓存一旦失效，用户多开几个

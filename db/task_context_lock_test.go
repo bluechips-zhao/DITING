@@ -479,7 +479,7 @@ func openSingleConnectionTestDB(t *testing.T, dsn string) (*DB, int) {
 	if err := sqlDB.QueryRow(`SELECT pg_backend_pid()`).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	return &DB{sqlDB}, pid
+	return &DB{DB: sqlDB}, pid
 }
 
 func waitForBackendBlock(observer *DB, pid int, done <-chan error) error {

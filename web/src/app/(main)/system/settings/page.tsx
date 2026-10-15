@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { UpdateCard } from "./_components/update-card";
+import { LoadError } from "@/components/load-error";
 import { MigrationPanel } from "@/components/migration-panel";
 import * as React from "react";
 
@@ -33,6 +36,8 @@ export default function SystemSettingsPage() {
   const [savingGlobalProxy, setSavingGlobalProxy] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
+  const [loadError, setLoadError] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [savingKey, setSavingKey] = React.useState(false);
   const [pyInterp, setPyInterp] = React.useState("");
@@ -95,17 +100,21 @@ export default function SystemSettingsPage() {
     api
       .detectPython()
       .then((r) => setPyInterp(r.python_interpreter))
-      .catch(() => undefined)
+      .catch((e) => toast.error("检测失败：" + (e as Error).message))
       .finally(() => setSaving(false));
   };
 
-  React.useEffect(() => {
-    api
-      .settings()
-      .then(apply)
-      .catch(() => undefined)
-      .finally(() => setLoaded(true));
+  const load = React.useCallback(() => {
+    setLoading(true);
+    api.settings().then((s) => {
+      apply(s);
+      setLoadError("");
+      setLoaded(true);
+    }).catch((e) => setLoadError("系统配置读取失败：" + (e as Error).message))
+      .finally(() => setLoading(false));
   }, [apply]);
+
+  React.useEffect(load, [load]);
 
   const toggleTraffic = (v: boolean) => {
     setTrafficCapture(v); // optimistic
@@ -113,7 +122,7 @@ export default function SystemSettingsPage() {
     api
       .setSettings({ traffic_capture: v })
       .then(apply)
-      .catch(() => setTrafficCapture(!v)) // revert on failure
+      .catch((e) => { setTrafficCapture(!v); toast.error("保存失败：" + (e as Error).message); }) // revert on failure
       .finally(() => setSaving(false));
   };
 
@@ -122,7 +131,7 @@ export default function SystemSettingsPage() {
     api
       .setSettings({ constraints_inject_planner: v })
       .then(apply)
-      .catch(() => setInjectPlanner(!v)); // revert on failure
+      .catch((e) => { setInjectPlanner(!v); toast.error("保存失败：" + (e as Error).message); }); // revert on failure
   };
 
   const toggleAgentTrafficBinding = (v: boolean) => {
@@ -146,7 +155,7 @@ export default function SystemSettingsPage() {
     api
       .setSettings({ constraints_inject_worker: v })
       .then(apply)
-      .catch(() => setInjectWorker(!v)); // revert on failure
+      .catch((e) => { setInjectWorker(!v); toast.error("保存失败：" + (e as Error).message); }); // revert on failure
   };
 
   const toggleNoaCompaction = (v: boolean) => {
@@ -261,13 +270,14 @@ export default function SystemSettingsPage() {
         <p className="text-muted-foreground text-sm">全局运行时开关</p>
       </div>
 
+      {loadError && <LoadError message={loadError} retry={load} busy={loading} />}
       {/* 多列而非 grid：网络搜索卡片比其余高数倍，且高度随所选后端变化（brave/tavily
           的 key 输入是条件渲染）。grid 会按最高的一张撑满整行、在旁边留下大片空白，
           多列则自动按内容高度平衡填充。卡片间距靠 mb 而非 gap——多列布局下
           column-gap 只管列间距，行间距要由子元素自己给。 */}
       <div className="columns-1 gap-4 md:gap-6 lg:columns-2">
-        <div className="mb-4 break-inside-avoid md:mb-6"><BackupPanel/><MigrationPanel/></div>
-        {/* TODO: 版本更新卡片暂撤——等 fork 上 GitHub 有稳定 release 后再加回来（组件保留在 ./_components/update-card） */}
+        <div className="mb-4 break-inside-avoid md:mb-6"><Card className="mb-4"><CardHeader><CardTitle>初始化与环境检查</CardTitle><CardDescription>查看环境检测结果，配置第一个模型。</CardDescription></CardHeader><CardContent><Button asChild variant="outline"><Link href="/system/setup">打开配置向导</Link></Button></CardContent></Card><BackupPanel/><MigrationPanel/></div>
+        <UpdateCard />
         <Card className="mb-4 break-inside-avoid md:mb-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">

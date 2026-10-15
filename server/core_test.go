@@ -19,22 +19,27 @@ import (
 // TestCoreTaskLifecyclePG exercises the migrated core (tasks/exploration on PG)
 // through the real HTTP mux: create → goal nodes seeded → list → delete cascade.
 func TestCoreTaskLifecyclePG(t *testing.T) {
-	m, err := NewManager(t.TempDir(), "")
-	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
-	}
+	m := newIsolatedTestManager(t)
 	defer m.Close()
 	td := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s := New(ctx, m, td, td, td)
+	defer func() {
+		cancel()
+		s.archiveWG.Wait()
+		<-s.side.done
+		for _, task := range m.List() {
+			s.engine.StopTask(task.ID)
+		}
+	}()
 	// Isolate goal seeding from an earlier test's configured provider.
 	s.cfgMu.Lock()
 	s.llmProv = &scriptedLLMProvider{err: errors.New("status 400: local test has no decomposition")}
 	s.llmOn = true
 	s.cfgMu.Unlock()
 	h := s.Handler()
-	tok, err := signJWT(s.jwtKey)
+	tok, err := s.issueToken()
 	if err != nil {
 		t.Fatalf("sign jwt: %v", err)
 	}
