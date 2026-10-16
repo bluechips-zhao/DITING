@@ -53,6 +53,10 @@ func main() {
 }
 
 func run() int {
+	if err := config.ValidateHome(); err != nil {
+		log.Print(err)
+		return 1
+	}
 	var (
 		addr    = flag.String("addr", "127.0.0.1:8787", "HTTP listen address")
 		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "workspace data directory (default: data/ next to the executable)")

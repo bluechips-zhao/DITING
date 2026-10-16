@@ -26,6 +26,23 @@ def validate(path):
             if lower in names:
                 raise ValueError(f"Duplicate archive path: {relative}")
             names.add(lower)
+            if lower == '.env.example':
+                values = {}
+                for line in archive.read(entry).decode('utf-8').splitlines():
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    key, separator, value = line.partition('=')
+                    if not separator or key in values:
+                        raise ValueError('Invalid Docker environment template')
+                    values[key] = value
+                if set(values) != {'POSTGRES_PASSWORD', 'DITING_IMAGE', 'DITING_PORT', 'DITING_PROXY_PORT'} or values['POSTGRES_PASSWORD']:
+                    raise ValueError('Docker environment template contains credentials or unexpected settings')
+                if not re.fullmatch(r'diting:[0-9]+\.[0-9]+\.[0-9]+-local', values['DITING_IMAGE']):
+                    raise ValueError('Invalid local Docker image template')
+                if any(not values[key].isdigit() or not 1 <= int(values[key]) <= 65535 for key in ('DITING_PORT', 'DITING_PROXY_PORT')):
+                    raise ValueError('Invalid Docker port template')
+                continue
             if any(part.lower() in {"data", "logs", "backups", "node_modules", ".git", "mock"} for part in parts[1:]):
                 raise ValueError(f"Runtime or development directory: {relative}")
             if re.search(r"(^|/)(config\.json|scheduler_state\.json|\.env(?:\..*)?|.*\.(?:key|pem|p12|pfx|db|sqlite|sqlite3|db-wal|db-shm|dump|backup|dbak|har|pcap|pcapng|log|pid)|handover\.md|implementation\.md|ui_acceptance\.md|validation-.*\.json)$", lower):

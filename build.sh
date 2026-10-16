@@ -99,6 +99,9 @@ if [ -z "${ARTEX_BUILD_VERSION:-}" ]; then
 fi
 # Release tags are commonly passed as v0.3.3; keep the binary version consistent.
 ARTEX_BUILD_VERSION="${ARTEX_BUILD_VERSION#v}"
+case "$ARTEX_BUILD_VERSION" in
+  ''|*[!a-zA-Z0-9._+-]*) die "构建版本只能包含字母、数字、点、下划线、加号和连字符" ;;
+esac
 ARTEX_OUTPUT_DIR="${ARTEX_OUTPUT_DIR:-dist}"
 ARTEX_PACKAGE_DIR="${ARTEX_PACKAGE_DIR:-$ARTEX_OUTPUT_DIR}"
 ARTEX_UPX_ARGS="${ARTEX_UPX_ARGS:---best --lzma}"
@@ -169,9 +172,11 @@ package_binary() {
   package_root="${ARTEX_PACKAGE_DIR}/${package_name}"
   archive="${ARTEX_PACKAGE_DIR}/${package_name}.zip"
 
+  if [ -e "$package_root" ] || [ -L "$package_root" ] || [ -e "$archive" ] || [ -L "$archive" ]; then
+    die "打包输出已存在，请先另存旧版本或选择新目录：$archive"
+  fi
   command -v zip >/dev/null 2>&1 || die "打包需要 zip"
-  rm -rf "$package_root" "$archive"
-  mkdir -p "$package_root"
+  mkdir "$package_root"
   cp "$binary" "$package_root/"
   # 守护启动脚本是正式入口：页面上的一键更新要靠它在进程退出后重新拉起，
   # 直接跑 artex 本体的话更新完就再也起不来了。按目标系统只带对应的那一份。
@@ -189,6 +194,10 @@ package_binary() {
   done < "$package_root/.skill-manifest"
   rm "$package_root/.skill-manifest"
   cp config.example.json "$package_root/"
+  mkdir -p "$package_root/scripts" "$package_root/docs"
+  cp scripts/backup.ps1 scripts/docker_backup.py scripts/requirements-backup.txt "$package_root/scripts/"
+  cp docs/DOCKER_BACKUP.md "$package_root/docs/"
+  cp docker-compose.yml .env.example "$package_root/"
   cp LICENSE "$package_root/"
   if [ -f THIRD_PARTY_NOTICES.md ]; then cp THIRD_PARTY_NOTICES.md "$package_root/"; fi
   if [ -d screenshots ]; then cp -R screenshots "$package_root/"; fi
@@ -198,8 +207,8 @@ package_binary() {
     cp web/LICENSE "$package_root/licenses/web-LICENSE"
   fi
   if [ -f README.md ]; then cp README.md "$package_root/"; fi
+  if [ -f AGENTS.md ]; then cp AGENTS.md "$package_root/"; fi
   (cd "$ARTEX_PACKAGE_DIR" && zip -q -r -9 "$(basename "$archive")" "$(basename "$package_root")")
-  rm -rf "$package_root"
   ok "Release 压缩包：$archive"
 }
 

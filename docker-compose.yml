@@ -1,44 +1,52 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-artex}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-artex}
+      POSTGRES_USER: diting
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: diting
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-artex} -d ${POSTGRES_DB:-artex}"]
+      test: [CMD-SHELL, 'pg_isready -U diting -d diting']
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
     restart: unless-stopped
-
   artex:
-    # Prepare dist/<arch>/artex and build Dockerfile locally before using compose.
-    image: diting:local
+    image: ${DITING_IMAGE:-diting:2.5.0-local}
+    build:
+      context: .
+      args:
+        VERSION: 2.5.0
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      ARTEX_PG_DSN: postgres://${POSTGRES_USER:-artex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-artex}?sslmode=disable
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ARTEX_LLM_PROVIDER: ${ARTEX_LLM_PROVIDER:-}
-      ARTEX_LLM_MODEL: ${ARTEX_LLM_MODEL:-}
-      ARTEX_LLM_BASE_URL: ${ARTEX_LLM_BASE_URL:-}
-      ARTEX_LLM_PROXY: ${ARTEX_LLM_PROXY:-}
+      ARTEX_HOME: /var/lib/diting/runtime
+      ARTEX_SKILL_DIR: /var/lib/diting/skills
+      HOME: /var/lib/diting/home
+      DITING_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique POSTGRES_PASSWORD in .env}
     ports:
-      - "8787:8787"
-      - "127.0.0.1:8788:8788"
+      - '127.0.0.1:${DITING_PORT:-8787}:8787'
+      - '127.0.0.1:${DITING_PROXY_PORT:-8788}:8788'
     volumes:
-      # 把数据目录（含 jwt.key、SQLite 等）绑定到项目根目录的 data/，
-      # 方便在宿主机直接查看/备份，容器重建也不丢。
-      - ./data:/app/data
-      # 把项目根目录的 skills 挂进容器（覆盖镜像内置的 /app/skills）；
-      # 改 skill 无需重建镜像，容器读的就是宿主机这份。
-      - ./skills:/app/skills
+      - runtime:/var/lib/diting/runtime
+      - workspace:/var/lib/diting/data
+      - skills:/var/lib/diting/skills
+      - toolhome:/var/lib/diting/home
+    init: true
+    stop_grace_period: 40s
+    healthcheck:
+      test: [CMD, python, /app/docker/healthcheck.py]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 6
     restart: unless-stopped
-
 volumes:
   pgdata:
+  runtime:
+  workspace:
+  skills:
+  toolhome:

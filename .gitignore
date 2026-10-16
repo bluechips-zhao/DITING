@@ -25,7 +25,8 @@ web/next-env.d.ts
 *.swo
 
 # docs
-/docs/
+/docs/*
+!/docs/DOCKER_BACKUP.md
 
 # os
 .DS_Store

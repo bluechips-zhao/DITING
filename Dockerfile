@@ -1,45 +1,52 @@
 # syntax=docker/dockerfile:1
-#
-# 运行镜像（不在镜像里编译）：只装常用工具，放入**预编译好的 Linux 单二进制**。
-# 二进制由 CI 的 binaries job 交叉编译（纯 Go、无 QEMU），按目标架构放在
-# 构建上下文的 dist/<TARGETARCH>/artex。这样多架构构建时 arm64 只需模拟 apt 层，
-# 不再模拟 Next/Go 编译，速度快得多。
-#
-# 本地手动构建镜像时，先自行准备二进制：
-#   cd web && npm run build:static && cd ..
-#   cp -r web/out server/webui/dist
-#   CGO_ENABLED=0 GOARCH=amd64 go build -tags embedui -o dist/amd64/artex ./cmd/artex
-#   docker build -t artex:local .
+FROM node:22.23.1-bookworm-slim AS frontend
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+ARG FRONTEND_OFFLINE=false
+RUN --mount=type=cache,target=/root/.npm \
+    npm_config_proxy="${HTTP_PROXY:-}" npm_config_https_proxy="${HTTPS_PROXY:-}" \
+    npm ci --no-audit --no-fund --maxsockets=4 --prefer-offline --offline="${FRONTEND_OFFLINE}"
+COPY web/ ./
+ENV NEXT_PUBLIC_MOCK=0
+RUN npm run build:static
+FROM golang:1.26.3-bookworm AS backend
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . ./
+COPY --from=frontend /src/web/out /src/server/webui/dist
+ARG VERSION=2.5.0
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags embedui \
+    -ldflags "-s -w -buildid= -X main.version=${VERSION}" -o /out/artex ./cmd/artex
+FROM node:22.23.1-bookworm-slim AS node-runtime
 FROM python:3.12-slim-bookworm
-ARG TARGETARCH
-# 常用工具：ripgrep / curl / vim，加一批 recon 常备件（按需增删）。
-# Node 从 NodeSource 装 20.x：bookworm 自带的 apt nodejs 是 18，Playwright 要求 >=20。
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates ripgrep curl wget vim git jq unzip \
-      dnsutils iputils-ping netcat-openbsd inetutils-telnet whois nmap \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+       ca-certificates ripgrep curl wget vim git jq unzip dnsutils iputils-ping \
+       netcat-openbsd inetutils-telnet whois nmap \
     && rm -rf /var/lib/apt/lists/*
-# 预装 Playwright MCP 与 CLI（全局），运行时不再 npx 联网下载。
-# @playwright/mcp：browser MCP 直接 `npx @playwright/mcp`（已全局装好，无需 -y/@latest）。
-# @playwright/cli：提供 playwright-cli，装完顺带 --help 验证可执行。
-# 再装 playwright（提供浏览器管理），装完用 --with-deps 预置 chromium 及其系统依赖，
-# 这样容器内 MCP/CLI 首次启动即可用，不再联网下载浏览器。
-RUN npm install -g @playwright/mcp@latest @playwright/cli@latest playwright@latest \
-    && playwright-cli --help \
-    && playwright install --with-deps chromium \
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN --mount=type=cache,target=/root/.npm \
+    npm_config_proxy="${HTTP_PROXY:-}" npm_config_https_proxy="${HTTPS_PROXY:-}" \
+    npm install -g --maxsockets=4 --prefer-offline @playwright/mcp@0.0.83 @playwright/cli@0.1.22 playwright@1.64.0 \
+    && playwright-cli --help && playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-# 预编译好的对应架构二进制（dist/amd64/artex 或 dist/arm64/artex）
-COPY dist/${TARGETARCH}/artex /app/artex
-# 守护启动脚本：进程退出后按退出码决定是否重新拉起，页面一键更新靠它完成换装。
-# 它同时负责把 SIGTERM 转发给 artex —— docker stop 只把信号发给 PID 1，
-# 不转发的话 artex 收不到、做不了优雅关闭，10 秒后被 SIGKILL 硬杀。
+COPY --from=backend /out/artex /app/artex
 COPY start.sh /app/start.sh
-RUN chmod +x /app/artex /app/start.sh
-COPY skills/ /app/skills/
-# data/（SQLite + jwt.key）持久化点
-VOLUME ["/app/data"]
+COPY docker/ /app/docker/
+COPY skills/ /opt/diting/skills/
+RUN chmod +x /app/artex /app/start.sh \
+    && groupadd -g 10001 diting && useradd -u 10001 -g diting -M diting \
+    && mkdir -p /var/lib/diting/runtime /var/lib/diting/data /var/lib/diting/skills /var/lib/diting/home \
+    && chown -R 10001:10001 /var/lib/diting
+ENV ARTEX_HOME=/var/lib/diting/runtime ARTEX_SKILL_DIR=/var/lib/diting/skills HOME=/var/lib/diting/home
+USER 10001:10001
 EXPOSE 8787 8788
-ENTRYPOINT ["/app/start.sh"]
-CMD ["-addr", ":8787", "-proxy", ":8788"]
+ENTRYPOINT ["python", "/app/docker/entrypoint.py"]

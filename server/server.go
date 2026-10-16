@@ -976,6 +976,16 @@ func (s *Server) Handler() http.Handler {
 // --- handlers ---
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	if s.m == nil || s.m.pg == nil {
+		writeJSON(w, 503, map[string]any{"ok": false, "service": "artex", "version": BuildVersion})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.m.pg.PingContext(ctx); err != nil {
+		writeJSON(w, 503, map[string]any{"ok": false, "service": "artex", "version": BuildVersion})
+		return
+	}
 	writeJSON(w, 200, map[string]any{"ok": true, "service": "artex", "version": BuildVersion})
 }
 

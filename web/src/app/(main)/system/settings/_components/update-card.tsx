@@ -306,7 +306,7 @@ export function UpdateCard() {
           </p>
         )}
 
-        {info?.has_update && info.asset_available !== false && (
+        {info?.has_update && info.mode !== "docker" && info.asset_available !== false && (
           <p className="text-xs text-muted-foreground">
             将下载 <span className="font-mono">{info.asset}</span>
             {info.size ? `（${humanSize(info.size)}）` : ""}，校验 SHA256 并冒烟测试后才会替换，失败自动保留当前版本。
@@ -320,12 +320,11 @@ export function UpdateCard() {
           </p>
         )}
 
-        {info?.mode === "docker" && info.has_update && (
+        {info?.mode === "docker" && (
           <p className="text-xs text-muted-foreground">
-            Docker 下的更新只替换程序本身，不更新镜像里的 playwright / nmap 等工具链，且
-            <span className="font-mono"> docker compose up -d </span>
-            重建容器后会退回镜像自带的版本。需要连镜像一起升级请执行
-            <span className="font-mono"> docker compose pull artex &amp;&amp; docker compose up -d artex</span>。
+            容器部署通过更新镜像升级应用。请先停止应用并保存数据库与持久化文件的完整备份，再构建或载入目标镜像，执行
+            <span className="font-mono"> docker compose up -d --no-deps --force-recreate artex</span>。
+            退回旧版时请使用升级前备份恢复到新数据库和新数据卷。
           </p>
         )}
 
@@ -346,13 +345,13 @@ export function UpdateCard() {
           <Button
             size="sm"
             onClick={doUpdate}
-            disabled={checking || busy || restarting || !!checkError || !!info?.error || !info?.has_update || info?.asset_available === false}
+            disabled={checking || busy || restarting || info?.mode === "docker" || !!checkError || !!info?.error || !info?.has_update || info?.asset_available === false}
           >
             <DownloadIcon className="size-4" />
             {info?.has_update ? `更新到 ${info.latest}` : "立即更新"}
           </Button>
           {info?.has_backup && (
-            <Button variant="ghost" size="sm" onClick={doRollback} disabled={busy || restarting}>
+            <Button variant="ghost" size="sm" onClick={doRollback} disabled={busy || restarting || info?.mode === "docker"}>
               <RotateCcwIcon className="size-4" />
               回滚到上一版本
             </Button>

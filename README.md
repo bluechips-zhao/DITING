@@ -2,22 +2,13 @@
 
 LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 
-当前发行版本：**2.4.0**。提供 Windows amd64 安装包和源码；完整应用容器部署不属于本版交付范围。
+当前公开版本：**2.5.0**。本版提供 Windows amd64 安装包，以及应用与 PostgreSQL 的 Docker Desktop Linux amd64 离线镜像和部署包。首次安装为空白业务状态；界面截图中的合成记录不会导入安装。
 
 [下载发行版](https://github.com/bluechips-zhao/DITING/releases) · [界面截图](#界面预览) · [开始使用](#开始使用)
 
 基于 [ARTEX](https://github.com/Autumn-27/ARTEX) 改造，保留资产图、任务探索、多代理协作、流量证据和人工审批，增加预算、证据关系、报告版本、完整导出与加密备份恢复。前端参考 Amicro，支持深浅主题与移动端。仅用于拥有或明确获得授权的目标。
 
 **首次使用为空白业务状态。** 源码和发行包不包含演示数据库、任务、资产、漏洞、对话、模型配置、API Key 或管理员密码。首次启动需要自己的 PostgreSQL、登录密码和模型配置。内置 Agent、工具定义、提示词、拦截规则是功能默认项，会自动初始化。
-
-## 2.4.0 更新
-
-- 数据库初始化、环境检查和模型配置向导；保存模型不自动调用供应商。
-- 运行凭据加密存储，独立凭据密钥随加密备份恢复。
-- 登录失败限速、改密后旧会话失效及持续 SSE 鉴权。
-- 首次业务列表为空，不包含模型密钥、运行数据库或演示记录。
-
-升级与回退请阅读下方备份说明。
 
 ## 界面预览
 
@@ -54,14 +45,14 @@ LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
    ```
 
    将 `YOUR_DATABASE_PASSWORD` 换成自己的强密码。
-3. 2.4.0可直接运行 `start.bat`，在本机数据库向导填写连接信息。也可复制 `config.example.json` 为 `config.json` 手动配置；示例为 `127.0.0.1:5433`、用户/数据库 `diting`，密码必须自行填写。`skill_dir` 留空使用程序旁的 `skills/`。
+3. 2.4.0 起可直接运行 `start.bat`，在本机数据库向导填写连接信息。也可复制 `config.example.json` 为 `config.json` 手动配置；示例为 `127.0.0.1:5433`、用户/数据库 `diting`，密码必须自行填写。`skill_dir` 留空使用程序旁的 `skills/`。
 4. 运行 `start.bat`，或在 PowerShell 中：
 
    ```powershell
    .\start.bat -addr 127.0.0.1:8787 -proxy 127.0.0.1:8788
    ```
 
-5. 打开 [本地工作台](http://localhost:8787)。2.4.0数据库未配置或连接失败时显示本机向导；连接测试不创建数据库、不改动配置，保存成功后同一进程进入密码初始化。设置至少 8 位登录密码，随后完成环境检查和模型配置；模型保存不发起供应商请求。可稍后从「系统配置 → 初始化与环境检查」返回向导，再创建企业、资产、任务或对话。
+5. 打开 [本地工作台](http://localhost:8787)。2.4.0 起数据库未配置或连接失败时显示本机向导；连接测试不创建数据库、不改动配置，保存成功后同一进程进入密码初始化。设置至少 8 位登录密码，随后完成环境检查和模型配置；模型保存不发起供应商请求。可稍后从「系统配置 → 初始化与环境检查」返回向导，再创建企业、资产、任务或对话。
 
 数据库初始化向导（隔离验收实例，无业务数据或凭据）：
 
@@ -71,7 +62,51 @@ LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 
 发行包内部可执行文件名保留 `artex.exe`，产品品牌为 DITING。启动脚本也支持源码构建的 `diting.exe`。原有 `ARTEX_*` 环境变量保留兼容名称，`ARTEX_PG_DSN` 优先于配置文件；如之前设置过，请确认它指向预期数据库。
 
-本版本提供 Windows amd64 包。其他平台可从源码编译；跨平台 CI 的结果以对应运行记录为准。
+本次首发提供 Windows amd64 包。其他平台可从源码编译；跨平台 CI 的结果以对应运行记录为准。
+
+### 应用与数据库 Docker 部署（2.5.0）
+
+已在 Windows Docker Desktop 的 Linux amd64 引擎实际验证空卷安装、登录、持久化重建、升级、加密备份与隔离恢复；本版通过 GitHub Release 提供离线镜像，不提供容器镜像仓库地址；独立 Linux 宿主机、macOS 和其他架构未在本版实际验收。使用 Docker Desktop 的 Linux 引擎或 Linux Docker Engine，可从源码构建：
+
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env，填写自己的 POSTGRES_PASSWORD；空密码会被拒绝。
+docker compose -p diting build artex
+docker compose -p diting up -d
+docker compose -p diting ps
+```
+
+从 [2.5.0 发行页](https://github.com/bluechips-zhao/DITING/releases/tag/v2.5.0) 下载 Docker 部署 ZIP、应用镜像 TAR 和 PostgreSQL 镜像 TAR。将部署包解压，在含 `docker-compose.yml` 的目录运行；镜像路径按实际保存位置填写：
+
+```powershell
+docker load -i DITING-2.5.0-linux-amd64-image.tar
+docker load -i PostgreSQL-16.15-linux-amd64-image.tar
+Copy-Item .env.example .env
+# 编辑 .env，填写自己的 POSTGRES_PASSWORD。
+docker compose -p diting --env-file .env up -d --no-build --wait
+docker compose -p diting --env-file .env ps
+```
+
+此方式不需要构建或下载已提供的镜像；首次安装仍需用户自行设置密码。镜像不包含数据库、业务数据或模型凭据。Docker 部署包与两个镜像归档均需保留；备份工具的宿主机 Python 依赖需另行安装，不承诺该依赖安装过程离线可用。
+
+打开 `http://127.0.0.1:8787` 初始化登录密码和模型。数据库自动创建空库；模型、任务、企业、资产、发现和对话均不预置。Compose 将 PostgreSQL 固定为 16.15，等待数据库健康后启动应用，应用健康检查也验证数据库连接。数据库不发布宿主端口；应用与录制代理仅映射本机 `8787/8788`，可通过 `.env` 更改端口。
+
+应用使用 UID/GID 10001 运行。`ARTEX_HOME=/var/lib/diting/runtime` 保存配置、`jwt.key` 与 `secrets.key`；工作区在独立 `/var/lib/diting/data` 卷，避免密钥出现在可浏览工作区。技能及工具用户目录分别持久化，首次空技能卷从镜像初始化，重建后保留用户修改。`ARTEX_HOME` 必须使用绝对路径；Windows 未设置时保留原程序目录行为，`ARTEX_CONFIG` 仍可单独指定配置文件。
+
+固定项目名 `-p diting` 保证重建继续使用同一批卷。`docker compose -p diting down` 保留卷；不要在升级时加 `-v`。容器中的更新入口只用于检查版本；应用升级应先停机完整备份，再构建或载入目标镜像并重建应用。回退旧版需要恢复升级前完整备份到新库和新卷。[Docker 备份恢复操作说明](docs/DOCKER_BACKUP.md)介绍完整操作及限制。验收使用隔离测试数据，没有真实模型或目标调用。
+
+遇到部署故障时，先查看服务状态和近期日志：
+
+```sh
+docker compose -p diting ps -a
+docker compose -p diting logs --tail 100 postgres artex
+```
+
+- 构建依赖下载超时：检查宿主机及容器访问下载源的连接。需要宿主机代理时，在本次 `docker build` 中显式传入 `HTTP_PROXY`、`HTTPS_PROXY`，并添加 `--add-host host.docker.internal=host-gateway`；代理地址及凭据不要提交到源码。BuildKit 会缓存 npm 依赖，重新构建可以复用缓存。
+- PostgreSQL 不健康：检查数据库服务日志、卷的可用空间和 `.env` 密码。已有数据库卷不会因为修改 `POSTGRES_PASSWORD` 自动修改数据库内的密码；需按 PostgreSQL 的密码变更流程同步修改，不能靠删除卷解决。
+- 应用返回健康检查 503：数据库连接暂时不可用。先恢复数据库服务及连接，再检查应用健康状态；数据库健康后应用才会正常响应。
+- 应用报告凭据密钥不匹配：恢复该数据库对应的 `secrets.key`。不要生成新密钥覆盖原文件，也不要把密钥放入工作区。
+- Docker Desktop 在应用容器创建前提示 `dockerInference` 或 `engine.sock` 无法访问：这是 Docker Desktop 启动阶段的问题，[Docker 问题库有同类报告](https://github.com/docker/desktop-feedback/issues/554)。先退出 Desktop，按厂商说明恢复其运行目录；不要为此重置数据、注销 WSL 或删除业务卷。日志可能含敏感信息，分享前自行脱敏。
 
 ### 从源码构建
 
@@ -89,7 +124,7 @@ Copy-Item config.example.json config.json
 Windows 可分发 zip：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version 2.4.0
+powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version 2.5.0
 ```
 
 打包脚本按固定文件清单组装，不复制配置、JWT 密钥、数据库、日志或工作区文件；输出到 `dist/`，拒绝覆盖已有同版本产物。
@@ -112,7 +147,7 @@ cp config.example.json config.json
 - 业务和模型凭据保存在自己的 PostgreSQL；工作区与录制文件在应用数据目录。JWT 签名密钥首次运行随机生成。
 - 不提交或转发 `config.json`、`.env`、`jwt.key`、`secrets.key`、`data/`、日志、抓包和备份；源码忽略规则覆盖这些文件。
 - 制作一致备份前停止任务、应用和代理；恢复使用新的空数据库与新的数据目录。
-- 2.4.0将模型密钥、搜索密钥、代理地址、模型入口、通知配置及 MCP 参数/环境/入口加密存入数据库，独立密钥为程序目录中的 `secrets.key`（打包程序所在目录；`go run` 时为当前工作目录）。`ARTEX_CONFIG` 只决定配置 JSON 的位置，不改变密钥位置。已有明文凭据在启动时事务迁移；缺失、损坏或错误的密钥会中止启动，保留数据库和原文件。
+- 2.4.0 开发版将模型密钥、搜索密钥、代理地址、模型入口、通知配置及 MCP 参数/环境/入口加密存入数据库，独立密钥为程序目录中的 `secrets.key`（打包程序所在目录；`go run` 时为当前工作目录）。`ARTEX_CONFIG` 只决定配置 JSON 的位置，不改变密钥位置。已有明文凭据在启动时事务迁移；缺失、损坏或错误的密钥会中止启动，保留数据库和原文件。
 - 加密密钥独立于 `jwt.key`；改密码不会更换凭据加密密钥。备份必须使用 `-IncludeLocalCredentials -EncryptionKey .\secrets.key` 一起封装原密钥，或用 `-KeyStoredSeparately` 明确声明已另行备份。包含密钥时工具会验证它能解密数据库凭据。恢复后将 `local/secrets.key` 放回程序目录，不能放入可浏览的工作区。
 - 加密保护数据库静态凭据；应用运行时仍需解密使用。本地数据库连接配置和运行日志不属于上述数据库字段加密范围，仍需保管配置目录。
 - 从 2.3.x 升级至 2.4.0 前，先用旧版本备份工具制作完整加密备份，并保留旧程序、数据库连接配置和 JWT 密钥。2.4.0 会加密旧数据库中的凭据；2.3.x 不能直接读取这些密文。因此退回 2.3.x 时，需要恢复升级前的数据库与工作区备份，不能只替换旧二进制。恢复使用新的空库和新目录，保留原数据库以便核对。

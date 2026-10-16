@@ -48,6 +48,13 @@ class PackageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             checker.validate(self.package({"config.example.json": b'{"database":{"password":"secret"}}'}))
 
+    def test_blank_docker_template_allowed_but_secrets_rejected(self):
+        template = b'POSTGRES_PASSWORD=\nDITING_IMAGE=diting:2.5.0-local\nDITING_PORT=8787\nDITING_PROXY_PORT=8788\n'
+        checker.validate(self.package({'.env.example': template}))
+        for altered in (template.replace(b'POSTGRES_PASSWORD=', b'POSTGRES_PASSWORD=secret'), template+b'API_KEY=private\n', template+b'POSTGRES_PASSWORD=\n'):
+            with self.assertRaises(ValueError):
+                checker.validate(self.package({'.env.example': altered}))
+
 
 if __name__ == "__main__":
     unittest.main()
