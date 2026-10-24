@@ -28,7 +28,10 @@ if errorlevel 8 (echo [ERR] 拷贝失败 & exit /b 1)
 echo [4/4] 编译单二进制...
 set "CGO_ENABLED=0"
 set "GOPROXY=https://goproxy.cn,direct"
-go build -trimpath -tags embedui -ldflags "-s -w -X main.version=2.5.0" -o diting.exe ./cmd/artex || (echo [ERR] Go 编译失败 & exit /b 1)
+set "BUILD_VERSION="
+for /f "delims=" %%v in ('node -p "require('./web/package.json').version"') do set "BUILD_VERSION=%%v"
+if not defined BUILD_VERSION (echo [ERR] 无法读取前端版本 & exit /b 1)
+go build -trimpath -tags embedui -ldflags "-s -w -X main.version=!BUILD_VERSION!" -o diting.exe ./cmd/artex || (echo [ERR] Go 编译失败 & exit /b 1)
 
 echo.
 echo ============================================

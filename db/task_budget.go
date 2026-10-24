@@ -73,7 +73,7 @@ func (d *DB) SetTaskBudget(ctx context.Context, b TaskBudget) error {
 }
 
 // Reservations serialize admission across workers and survive restart. Unknown
-// provider usage is conservatively charged at the reservation, never refunded.
+// provider usage is conservatively charged at least at the reservation.
 func (d *DB) ReserveTaskTokens(ctx context.Context, id, estimate int64) (callID int64, b TaskBudget, err error) {
 	tx, e := d.BeginTx(ctx, nil)
 	if e != nil {
@@ -138,13 +138,15 @@ func (d *DB) FinishTaskTokens(ctx context.Context, callID, actual int64, reporte
 	}
 	state = "reconciled"
 	unknown := 0
-	if !reported {
-		actual = reserved
-		state = "unknown"
-		unknown = 1
-	}
 	if actual < 0 {
 		return fmt.Errorf("negative provider usage")
+	}
+	if !reported {
+		// A partial response may already exceed the estimate. Never discard
+		// observed consumption or refund an unfinished call's reservation.
+		actual = max(actual, reserved)
+		state = "unknown"
+		unknown = 1
 	}
 	if _, err = tx.Exec(`UPDATE task_budget_calls SET charged=$2,state=$3 WHERE id=$1`, callID, actual, state); err != nil {
 		return err

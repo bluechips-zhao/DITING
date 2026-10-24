@@ -240,13 +240,34 @@ func EnsureDatabase(ctx context.Context, addr string, opts Options) error {
 	result := make(chan error, 1)
 	go func() { result <- srv.Serve(listener) }()
 	log.Printf("[setup] 请在本机浏览器打开 http://%s/ 完成数据库初始化", listener.Addr())
-	select {
-	case <-w.done:
-		err = nil
-	case <-ctx.Done():
-		err = ctx.Err()
-	case serveErr := <-result:
-		err = serveErr
+	// A configured database can be temporarily unavailable when the host or
+	// container engine restarts. Keep the local repair wizard available, but
+	// resume automatically once that same database is reachable again.
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+wait:
+	for {
+		select {
+		case <-w.done:
+			err = nil
+			break wait
+		case <-ctx.Done():
+			err = ctx.Err()
+			break wait
+		case serveErr := <-result:
+			err = serveErr
+			break wait
+		case <-ticker.C:
+			if opts.ExistingDSN == "" || ctx.Err() != nil {
+				continue
+			}
+			w.mu.Lock()
+			if !w.finished && opts.Check(ctx, opts.ExistingDSN) == nil && ctx.Err() == nil {
+				w.finished = true
+				close(w.done)
+			}
+			w.mu.Unlock()
+		}
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

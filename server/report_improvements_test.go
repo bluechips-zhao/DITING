@@ -56,7 +56,10 @@ func TestActualProviderAndToolCallsSharePersistentBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := newStoppedTestServer(m, t.TempDir(), t.TempDir(), t.TempDir())
-	provider := observedTaskProvider{engine: s.engine, taskID: fmt.Sprint(task.ID), base: &scriptedLLMProvider{events: []llm.StreamEvent{{Usage: llm.Usage{InputTokens: 20, OutputTokens: 10}}}}}
+	provider := observedTaskProvider{engine: s.engine, taskID: fmt.Sprint(task.ID), base: &scriptedLLMProvider{events: []llm.StreamEvent{
+		{Type: llm.SEMessageDelta, StopReason: "end_turn", Usage: llm.Usage{InputTokens: 20, OutputTokens: 10}},
+		{Type: llm.SEMessageStop},
+	}}}
 	for range provider.Stream(t.Context(), llm.CompletionRequest{MaxTokens: 10}) {
 	}
 	budget, err := m.pg.TaskBudget(t.Context(), task.ID)

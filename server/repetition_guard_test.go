@@ -2,6 +2,26 @@ package server
 
 import "testing"
 
+func TestRepetitionGuardKeepsLargeIntegerInputsDistinct(t *testing.T) {
+	g := &repetitionGuard{}
+	for range 3 {
+		g.observe("Read", []byte(`{"asset_id":9007199254740992}`), []byte("same"), false)
+	}
+	if g.blocked("Read", []byte(`{"asset_id":9007199254740993}`)) {
+		t.Fatal("different large integer identifiers must not share a repetition key")
+	}
+}
+
+func TestRepetitionGuardDoesNotDiscardTrailingInput(t *testing.T) {
+	g := &repetitionGuard{}
+	for range 3 {
+		g.observe("Read", []byte(`{"asset_id":1}`), []byte("same"), false)
+	}
+	if g.blocked("Read", []byte(`{"asset_id":1} {"asset_id":2}`)) {
+		t.Fatal("malformed trailing data must not be normalized into a different valid request")
+	}
+}
+
 func TestRepetitionGuardAllowsProgressAndStatefulWaiting(t *testing.T) {
 	g := &repetitionGuard{}
 	for range 3 {

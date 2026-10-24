@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -207,5 +208,50 @@ func TestDatabaseCheckRedactsConnectionFailures(t *testing.T) {
 	err := DatabaseCheck(context.Background(), "postgres://fixture:DO_NOT_DISCLOSE@127.0.0.1:1/missing?sslmode=disable")
 	if err == nil || strings.Contains(err.Error(), "DO_NOT_DISCLOSE") {
 		t.Fatal("connection failure exposed password")
+	}
+}
+
+func TestEnsureDatabaseAutomaticallyRecoversConfiguredDatabase(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	var calls atomic.Int32
+	path := filepath.Join(t.TempDir(), "config.json")
+	err := EnsureDatabase(ctx, "127.0.0.1:0", Options{
+		ConfigPath: path, ExistingDSN: "fixture", EnvironmentDSN: true,
+		Check: func(_ context.Context, dsn string) error {
+			if dsn != "fixture" {
+				t.Errorf("unexpected database selected")
+			}
+			if calls.Add(1) == 1 {
+				return errors.New("temporarily unavailable")
+			}
+			return nil
+		},
+	})
+	if err != nil || calls.Load() != 2 {
+		t.Fatalf("recovery err=%v calls=%d", err, calls.Load())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("automatic retry must not create or replace configuration")
+	}
+}
+
+func TestEnsureDatabaseCancelsAutomaticDatabaseRetry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	var calls atomic.Int32
+	err := EnsureDatabase(ctx, "127.0.0.1:0", Options{
+		ExistingDSN: "fixture",
+		Check: func(ctx context.Context, _ string) error {
+			if calls.Add(1) > 1 {
+				cancel()
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return errors.New("temporarily unavailable")
+		},
+	})
+	if !errors.Is(err, context.Canceled) || calls.Load() != 2 {
+		t.Fatalf("cancel err=%v calls=%d", err, calls.Load())
 	}
 }

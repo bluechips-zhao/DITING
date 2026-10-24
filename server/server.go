@@ -180,6 +180,12 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	// Wire DB-stored prompt templates into the agents (新版方案 §3.3 / §5a). With no
 	// override row, agents keep their built-in defaults — behavior is unchanged.
 	if m.pg != nil {
+		if err := m.pg.RecoverInterruptedModelCalls(context.Background()); err != nil {
+			log.Printf("[model-calls] interrupted call recovery failed: %v", err)
+		}
+		if _, err := m.pg.RecoverInterruptedIntercepts(context.Background()); err != nil {
+			log.Printf("[intercept] interrupted approval recovery failed: %v", err)
+		}
 		if err := m.pg.RecoverTaskBudgetCalls(context.Background()); err != nil {
 			log.Printf("[budget] interrupted request recovery failed: %v", err)
 		}
@@ -686,6 +692,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/update/stream", s.updateStream)
 
 	mux.HandleFunc("GET /api/tasks/{id}/runtime", s.taskRuntime)
+	mux.HandleFunc("GET /api/tasks/{id}/execution-stats", s.taskExecutionStats)
+	mux.HandleFunc("GET /api/tasks/{id}/evidence-candidates", s.listEvidenceCandidates)
+	mux.HandleFunc("PATCH /api/tasks/{id}/evidence-candidates/{candidate}", s.reviewEvidenceCandidate)
+	mux.HandleFunc("GET /api/tasks/{id}/evidence-candidates/{candidate}/source", s.evidenceCandidateSource)
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTask)
 	mux.HandleFunc("GET /api/task-categories", s.pgListTaskCategories)

@@ -356,7 +356,7 @@ export const api = {
   // 重跑一条没跑成功的意图(blocked/exhausted/stopped)：置回 open，worker 会重新认领、从头再跑。
   rerunIntent: (taskId: string, intentId: string) =>
     post<{ id: string; reopened: number; queued: boolean }>(`/tasks/${taskId}/intents/${intentId}/rerun`),
-	 taskRuntime: (taskId: string) => get<{ workers: { intent_id: string; worker: string; phase: string; tool?: string; elapsed_seconds: number; tool_calls: number; write_calls: number; constraints_version?: string }[]; llm_in_flight: number; settling: boolean; observed_at: string }>(`/tasks/${taskId}/runtime`),
+	 taskRuntime: (taskId: string) => get<{ workers: { intent_id: string; worker: string; phase: string; tool?: string; elapsed_seconds: number; total_elapsed_seconds: number; tool_calls: number; write_calls: number; constraints_version?: string }[]; llm_in_flight: number; settling: boolean; observed_at: string }>(`/tasks/${taskId}/runtime`),
   // 批量重跑本任务全部 blocked 意图（一次网络/LLM 断连导致多条 blocked 时一键全部重试）。
   rerunBlocked: (taskId: string) => post<{ id: string; reopened: number; queued: boolean }>(`/tasks/${taskId}/intents/rerun-blocked`),
   setActive: (id: string) => post<{ active: string }>("/active", { id }),

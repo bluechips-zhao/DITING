@@ -1,9 +1,19 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '2.5.0',
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$')][string]$Version,
     [switch]$SkipFrontend
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$frontendVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'web/package.json') -Raw | ConvertFrom-Json).version
+if (!$Version) {
+    $Version = $frontendVersion
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
+    throw 'Invalid package version'
+}
+if ($Version -ne $frontendVersion) {
+    throw 'Package version must match web/package.json; update source metadata before packaging.'
+}
 $packageRoot = Join-Path $repoRoot "dist/artex-$Version-windows-amd64"
 $archivePath = "$packageRoot.zip"
 if ((Test-Path -LiteralPath $packageRoot) -or (Test-Path -LiteralPath $archivePath)) {
@@ -37,7 +47,7 @@ try {
     $env:CGO_ENABLED = '0'
     & go build -trimpath -tags embedui -ldflags "-s -w -buildid= -X main.version=$Version" -o (Join-Path $packageRoot 'artex.exe') ./cmd/artex
     if ($LASTEXITCODE -ne 0) { throw 'Go build failed' }
-    foreach ($name in @('start.bat', 'config.example.json', 'README.md', 'AGENTS.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+    foreach ($name in @('start.bat', 'config.example.json', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
         Copy-Item -LiteralPath (Join-Path $repoRoot $name) -Destination $packageRoot
     }
     foreach ($relative in @('scripts/backup.ps1', 'scripts/docker_backup.py', 'scripts/requirements-backup.txt', 'docs/DOCKER_BACKUP.md', 'docker-compose.yml', '.env.example')) {

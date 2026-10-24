@@ -4,7 +4,7 @@ Go 后端、PostgreSQL、Next.js 静态前端。基于 ARTEX；Go module/import 
 
 ## 构建与配置
 
-- Windows：`build.bat` 安装依赖、导出静态资源、内嵌生成 `diting.exe`。当前开发版包使用 `scripts/package-release.ps1 -Version 2.5.0`，完成与否以 RELEASE_NOTES.md 验收记录为准。
+- Windows：`build.bat` 安装依赖、导出静态资源、内嵌生成 `diting.exe`。当前开发版包使用 `scripts/package-release.ps1 -Version 2.6.0`，完成与否以 RELEASE_NOTES.md 验收记录为准。
 - Bash：`./build.sh --target linux/amd64`。使用 `ARTEX_BUILD_VERSION` 指定内嵌版本。
 - Go 最低版本见 `go.mod`；前端使用 Node.js 22、npm 锁文件。
 - 正式构建必须使用 `-tags embedui` 和已生成的静态资源。

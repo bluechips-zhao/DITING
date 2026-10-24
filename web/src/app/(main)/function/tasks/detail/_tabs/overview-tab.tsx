@@ -23,6 +23,8 @@ import {
 
 import { StatusBadge } from "@/components/status-badge";
 import { TaskBudgetPanel } from "@/components/task-budget-panel";
+import { TaskExecutionStats } from "@/components/task-execution-stats";
+import { TaskEvidenceCandidates } from "@/components/task-evidence-candidates";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -444,8 +446,8 @@ export function OverviewTab({ taskId }: { taskId: string }) {
   return (
     <div className="flex flex-col gap-4">
 	  {loadError && <p role="alert" className="text-sm text-destructive">{loadError}；正在自动重试，当前内容可能已过期。</p>}
-	  {runtime && <Card><CardHeader><CardTitle className="text-sm">执行状态 · 实际模型请求 {runtime.llm_in_flight}{runtime.settling ? " · 收尾中" : ""}</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
-		{runtime.workers.length === 0 ? <p className="text-muted-foreground">当前没有运行中的 Worker</p> : runtime.workers.map(w => <div key={w.intent_id} className="flex flex-wrap items-center gap-3"><Badge variant="secondary">{w.worker} · #{w.intent_id}</Badge><span>{({ preparing:"准备", model:"模型请求", settling_model:"收尾模型请求", planning:"准备下一步", tool:"工具执行", sleep:"等待", approval:"等待审批", backoff:"重试退避" } as Record<string,string>)[w.phase] ?? w.phase}{w.tool ? ` · ${w.tool}` : ""}</span><span className="text-muted-foreground">{w.elapsed_seconds}s · 工具完成 {w.tool_calls} · 写回工具成功 {w.write_calls} · 启动约束 {w.constraints_version?.slice(0,12) ?? "未注入"}</span></div>)}
+	  {runtime && <Card><CardHeader><CardTitle className="text-sm">执行状态 · 模型调用中 {runtime.llm_in_flight}{runtime.settling ? " · 收尾中" : ""}</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
+		{runtime.workers.length === 0 ? <p className="text-muted-foreground">当前没有运行中的 Worker</p> : runtime.workers.map(w => <div key={w.intent_id} className="flex flex-wrap items-center gap-3"><Badge variant="secondary">{w.worker} · #{w.intent_id}</Badge><span>{({ preparing:"准备", model:"模型请求", settling_model:"收尾模型请求", planning:"准备下一步", tool:"工具执行", sleep:"等待", approval:"等待审批", backoff:"重试退避" } as Record<string,string>)[w.phase] ?? w.phase}{w.tool ? ` · ${w.tool}` : ""}</span><span className="text-muted-foreground">方向累计 {w.total_elapsed_seconds}s · 当前阶段 {w.elapsed_seconds}s · 工具完成 {w.tool_calls} · 写回工具成功 {w.write_calls} · 启动约束 {w.constraints_version?.slice(0,12) ?? "未注入"}</span></div>)}
 	  </CardContent></Card>}
       {/* 原始任务描述与目标(创建时填写的),置顶便于随时回看。 */}
       <Card>
@@ -590,6 +592,8 @@ export function OverviewTab({ taskId }: { taskId: string }) {
         </CardContent>
       </Card>
       <TaskBudgetPanel taskId={taskId}/>
+      <TaskExecutionStats taskId={taskId}/>
+      <TaskEvidenceCandidates taskId={taskId}/>
       {/* 操作约束管理：allow=允许 / deny=禁止。约束会在下一轮规划时注入 planner/worker 的系统
           提示以框定探索边界（注入范围可在 系统设置 里按 planner/worker 开关）。改动不即时打断，
           下一轮规划自然读到。 */}

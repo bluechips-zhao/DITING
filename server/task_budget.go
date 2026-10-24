@@ -125,11 +125,12 @@ func (p *observedTaskProvider) reserve(ctx context.Context, req llm.CompletionRe
 	}
 	return req, call, err
 }
-func (p *observedTaskProvider) finish(call int64, usage llm.Usage) {
+func (p *observedTaskProvider) finish(call int64, usage llm.Usage, completed bool) {
 	if pg := p.engine.budgetPG(); pg != nil && call > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := pg.FinishTaskTokens(ctx, call, int64(usage.InputTokens+usage.OutputTokens), usage.InputTokens+usage.OutputTokens > 0); err != nil {
+		used := int64(usage.InputTokens) + int64(usage.OutputTokens)
+		if err := pg.FinishTaskTokens(ctx, call, used, completed && used > 0); err != nil {
 			if t, ok := p.engine.m.Task(p.taskID); ok {
 				p.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "text", IsError: true, Summary: "预算用量结算失败，预留仍保留: " + err.Error()})
 			}

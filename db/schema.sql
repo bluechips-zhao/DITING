@@ -1455,3 +1455,34 @@ CREATE TABLE IF NOT EXISTS migration_health (
  error TEXT NOT NULL DEFAULT '',
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Metadata only: provider method calls, without prompts, responses or secrets.
+CREATE TABLE IF NOT EXISTS task_model_calls (
+ id BIGSERIAL PRIMARY KEY,
+ task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+ intent_id BIGINT REFERENCES exploration_nodes(id) ON DELETE SET NULL,
+ status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','completed','failed','interrupted')),
+ started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ finished_at TIMESTAMPTZ,
+ elapsed_ms BIGINT NOT NULL DEFAULT 0 CHECK(elapsed_ms>=0),
+ elapsed_recorded BOOLEAN NOT NULL DEFAULT false,
+ input_tokens BIGINT NOT NULL DEFAULT 0 CHECK(input_tokens>=0),
+ output_tokens BIGINT NOT NULL DEFAULT 0 CHECK(output_tokens>=0),
+ usage_reported BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS idx_task_model_calls_scope ON task_model_calls(task_id,intent_id);
+ALTER TABLE task_model_calls ADD COLUMN IF NOT EXISTS elapsed_recorded BOOLEAN NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS task_evidence_candidates (
+ id BIGSERIAL PRIMARY KEY,
+ task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+ intent_id BIGINT NOT NULL REFERENCES exploration_nodes(id) ON DELETE CASCADE,
+ activity_id BIGINT NOT NULL REFERENCES activity(id) ON DELETE CASCADE,
+ detector TEXT NOT NULL,
+ reason TEXT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','reviewed','dismissed')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ reviewed_at TIMESTAMPTZ,
+ UNIQUE(activity_id,detector)
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_candidate_task ON task_evidence_candidates(task_id,id);

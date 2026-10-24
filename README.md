@@ -2,7 +2,7 @@
 
 LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 
-当前公开版本：**2.5.0**。本版提供 Windows amd64 安装包，以及应用与 PostgreSQL 的 Docker Desktop Linux amd64 离线镜像和部署包。首次安装为空白业务状态；界面截图中的合成记录不会导入安装。
+当前发行版：**[2.6.0](https://github.com/bluechips-zhao/DITING/releases/tag/v2.6.0)**。本版改进任务运行可观测性、用量统计、预算与重复行为保护、候选发现的来源和审核状态。由独立 2.6 源码构建，真实模型和靶场验收按用户要求取消，不计为通过。
 
 [下载发行版](https://github.com/bluechips-zhao/DITING/releases) · [界面截图](#界面预览) · [开始使用](#开始使用)
 
@@ -25,6 +25,7 @@ LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 ## 主要功能
 
 - **任务与多代理**：规划、执行、对话、报告代理；模板、目标、约束、运行状态、模型配置链与纠偏入口。
+- **2.6 运行观测**：查看模型调用及用量口径、任务执行统计、无写回候选的来源和审核状态；候选信号保留为待审核，不自动当作已确认漏洞。
 - **预算与收尾**：token/工具预算、保守预留、耗尽后的收尾、有限默认轮次与无进展保护。
 - **资产与范围**：企业/任务资产、范围与拦截、筛选、完整 CSV/JSON 导出、批量挂接、ScopeSentry 同步。
 - **发现与证据**：请求/响应绑定、重复关系、复测、报告重生成作业、证据版本和历史报告。
@@ -62,11 +63,13 @@ LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 
 发行包内部可执行文件名保留 `artex.exe`，产品品牌为 DITING。启动脚本也支持源码构建的 `diting.exe`。原有 `ARTEX_*` 环境变量保留兼容名称，`ARTEX_PG_DSN` 优先于配置文件；如之前设置过，请确认它指向预期数据库。
 
-本次首发提供 Windows amd64 包。其他平台可从源码编译；跨平台 CI 的结果以对应运行记录为准。
+本版提供 Windows amd64 包。其他平台可从源码编译；跨平台 CI 的结果以对应运行记录为准。
 
-### 应用与数据库 Docker 部署（2.5.0）
+### 应用与数据库 Docker 部署（2.6.0）
 
-已在 Windows Docker Desktop 的 Linux amd64 引擎实际验证空卷安装、登录、持久化重建、升级、加密备份与隔离恢复；本版通过 GitHub Release 提供离线镜像，不提供容器镜像仓库地址；独立 Linux 宿主机、macOS 和其他架构未在本版实际验收。使用 Docker Desktop 的 Linux 引擎或 Linux Docker Engine，可从源码构建：
+本版提供 Docker 部署模板与源码构建入口。发布时本机 Docker 引擎不可用，因此没有重新构建和验收正式 2.6.0 容器，本版附件不提供预构建镜像。此前 2.5 与 2.6.0-dev 的 Docker Desktop Linux amd64 本地记录不视为本次正式镜像验收；独立 Linux/macOS 宿主亦未验收。
+
+在已安装 Docker 的环境解压源码后执行：
 
 ```powershell
 Copy-Item .env.example .env
@@ -76,18 +79,7 @@ docker compose -p diting up -d
 docker compose -p diting ps
 ```
 
-从 [2.5.0 发行页](https://github.com/bluechips-zhao/DITING/releases/tag/v2.5.0) 下载 Docker 部署 ZIP、应用镜像 TAR 和 PostgreSQL 镜像 TAR。将部署包解压，在含 `docker-compose.yml` 的目录运行；镜像路径按实际保存位置填写：
-
-```powershell
-docker load -i DITING-2.5.0-linux-amd64-image.tar
-docker load -i PostgreSQL-16.15-linux-amd64-image.tar
-Copy-Item .env.example .env
-# 编辑 .env，填写自己的 POSTGRES_PASSWORD。
-docker compose -p diting --env-file .env up -d --no-build --wait
-docker compose -p diting --env-file .env ps
-```
-
-此方式不需要构建或下载已提供的镜像；首次安装仍需用户自行设置密码。镜像不包含数据库、业务数据或模型凭据。Docker 部署包与两个镜像归档均需保留；备份工具的宿主机 Python 依赖需另行安装，不承诺该依赖安装过程离线可用。
+构建需要访问基础镜像与依赖源，不承诺离线可用。部署模板默认镜像名为 `diting:2.6.0-local`，PostgreSQL 使用 `postgres:16.15-alpine`。应用与数据库使用独立持久卷，新卷不预置业务数据或模型配置。
 
 打开 `http://127.0.0.1:8787` 初始化登录密码和模型。数据库自动创建空库；模型、任务、企业、资产、发现和对话均不预置。Compose 将 PostgreSQL 固定为 16.15，等待数据库健康后启动应用，应用健康检查也验证数据库连接。数据库不发布宿主端口；应用与录制代理仅映射本机 `8787/8788`，可通过 `.env` 更改端口。
 
@@ -124,7 +116,7 @@ Copy-Item config.example.json config.json
 Windows 可分发 zip：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version 2.5.0
+powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 ```
 
 打包脚本按固定文件清单组装，不复制配置、JWT 密钥、数据库、日志或工作区文件；输出到 `dist/`，拒绝覆盖已有同版本产物。

@@ -1223,6 +1223,9 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		e.emitActivity(t, db.Activity{NodeID: &uid, Worker: "system", Kind: "text",
 			Summary: fmt.Sprintf("意图 #%d 正常结束但零写回（未落库任何事实/资产/漏洞），已标记 exhausted 交规划者复核，不当「已覆盖」处理", intent.ID)})
 	}
+	if candidateErr := e.collectEvidenceCandidates(t, intent.ID, zeroWriteback); candidateErr != nil {
+		log.Printf("[worker %s] task %s intent %d evidence candidate collection failed", name, t.ID, intent.ID)
+	}
 	log.Printf("[worker %s] task %s 意图 #%d 结束: %s (写回 %s)", name, t.ID, intent.ID, state, wrote)
 	e.touch(t.ID)
 	t.NotifyDone(intent.ID) // results changed the graph -> wake the planner (with the just-finished intent id)

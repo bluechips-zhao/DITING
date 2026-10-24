@@ -207,7 +207,6 @@ package_binary() {
     cp web/LICENSE "$package_root/licenses/web-LICENSE"
   fi
   if [ -f README.md ]; then cp README.md "$package_root/"; fi
-  if [ -f AGENTS.md ]; then cp AGENTS.md "$package_root/"; fi
   (cd "$ARTEX_PACKAGE_DIR" && zip -q -r -9 "$(basename "$archive")" "$(basename "$package_root")")
   ok "Release 压缩包：$archive"
 }

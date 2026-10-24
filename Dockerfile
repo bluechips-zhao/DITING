@@ -15,7 +15,7 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . ./
 COPY --from=frontend /src/web/out /src/server/webui/dist
-ARG VERSION=2.5.0
+ARG VERSION=2.6.0
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags embedui \
     -ldflags "-s -w -buildid= -X main.version=${VERSION}" -o /out/artex ./cmd/artex

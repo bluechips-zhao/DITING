@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 )
@@ -19,7 +21,9 @@ type repetitionGuard struct {
 
 func repeatKey(name string, input []byte) string {
 	var value any
-	if json.Unmarshal(input, &value) == nil {
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+	if decoder.Decode(&value) == nil && decoder.Decode(new(any)) == io.EOF {
 		if raw, err := json.Marshal(value); err == nil {
 			input = raw
 		}

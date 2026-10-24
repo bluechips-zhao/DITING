@@ -582,6 +582,9 @@ func (i *Interceptor) Log(ctx context.Context, convID int64, dec Decision, toolN
 // page shows it and the sidebar badge lights up. The worker thread blocks just
 // like in a chat session — the user must visit the approvals page to unblock it.
 func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision, toolName string, input []byte) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	ruleID := dec.RuleID
 	taskID, agentName := taskInfoFromCtx(ctx)
 	taskEmit := taskEmitFromCtx(ctx)
@@ -595,11 +598,19 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 	i.bindResult(ctx, pendingID, audit)
 	ch := i.pending.add(pendingID)
 	defer i.pending.remove(pendingID)
+	finish := func(allowed bool) bool {
+		if ctx.Err() == nil {
+			return allowed
+		}
+		_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "工作已取消")
+		_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "执行前工作已取消", false)
+		return false
+	}
 	// Polling clients can decide after INSERT commits but before the channel is
 	// registered. Re-read after registration so that decision cannot be lost;
 	// later decisions will be delivered through ch.
 	if saved, err := i.db.GetInterceptDetail(pendingID); err == nil && saved != nil && saved.Status != "pending" {
-		return saved.Status == "allowed" || (saved.Audit != nil && saved.Audit.EffectiveAction == "allow")
+		return finish(saved.Status == "allowed" || (saved.Audit != nil && saved.Audit.EffectiveAction == "allow"))
 	}
 
 	detail, _ := json.Marshal(map[string]any{
@@ -626,11 +637,9 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		// No timeout: wait indefinitely until user decides or worker stops.
 		select {
 		case allowed := <-ch:
-			return allowed
+			return finish(allowed)
 		case <-ctx.Done():
-			_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "工作已取消")
-			_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "执行前工作已取消", false)
-			return false
+			return finish(false)
 		}
 	}
 
@@ -642,7 +651,7 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 	defer timer.Stop()
 	select {
 	case allowed := <-ch:
-		return allowed
+		return finish(allowed)
 	case <-timer.C:
 		allowed := dec.TimeoutAction == "allow"
 		action := "deny"
@@ -655,13 +664,11 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		}
 		if !resolved {
 			detail, err := i.db.GetInterceptDetail(pendingID)
-			return err == nil && detail != nil && (detail.Status == "allowed" || (detail.Audit != nil && detail.Audit.EffectiveAction == "allow"))
+			return finish(err == nil && detail != nil && (detail.Status == "allowed" || (detail.Audit != nil && detail.Audit.EffectiveAction == "allow")))
 		}
-		return allowed
+		return finish(allowed)
 	case <-ctx.Done():
-		_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "工作已取消")
-		_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "执行前工作已取消", false)
-		return false
+		return finish(false)
 	}
 }
 
