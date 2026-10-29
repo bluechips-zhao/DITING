@@ -14,11 +14,11 @@ services:
       retries: 20
     restart: unless-stopped
   artex:
-    image: ${DITING_IMAGE:-diting:2.6.0-local}
+    image: ${DITING_IMAGE:-diting:2.7.0-local}
     build:
       context: .
       args:
-        VERSION: 2.6.0
+        VERSION: 2.7.0
     depends_on:
       postgres:
         condition: service_healthy

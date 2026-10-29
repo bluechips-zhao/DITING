@@ -2,7 +2,7 @@
 
 LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 
-当前发行版：**[2.6.0](https://github.com/bluechips-zhao/DITING/releases/tag/v2.6.0)**。本版改进任务运行可观测性、用量统计、预算与重复行为保护、候选发现的来源和审核状态。由独立 2.6 源码构建，真实模型和靶场验收按用户要求取消，不计为通过。
+当前发行版：**[2.7.0](https://github.com/bluechips-zhao/DITING/releases/tag/v2.7.0)**。本版增加报告来源与证据追溯、企业跨任务汇总、脱敏报告历史、复测快照对比和资产变化记录。由保存的独立 2.7 源码准备，后续开发内容不在本版中。真实模型和靶场验收已取消，不计为通过。
 
 [下载发行版](https://github.com/bluechips-zhao/DITING/releases) · [界面截图](#界面预览) · [开始使用](#开始使用)
 
@@ -25,14 +25,16 @@ LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 ## 主要功能
 
 - **任务与多代理**：规划、执行、对话、报告代理；模板、目标、约束、运行状态、模型配置链与纠偏入口。
-- **2.6 运行观测**：查看模型调用及用量口径、任务执行统计、无写回候选的来源和审核状态；候选信号保留为待审核，不自动当作已确认漏洞。
 - **预算与收尾**：token/工具预算、保守预留、耗尽后的收尾、有限默认轮次与无进展保护。
 - **资产与范围**：企业/任务资产、范围与拦截、筛选、完整 CSV/JSON 导出、批量挂接、ScopeSentry 同步。
 - **发现与证据**：请求/响应绑定、重复关系、复测、报告重生成作业、证据版本和历史报告。
+- **报告与追溯（2.7）**：企业跨任务报告、技术明细/管理摘要、显式保存的脱敏报告历史、复测开始快照对比与资产字段变化。报告保留来源 ID；历史不伪造过去记录，未完成复测不作为修复结论。
 - **会话与流量**：搜索与完整历史导出；流量录制、HAR/CSV 和原始报文包导出。
 - **系统与恢复**：LLM、MCP、技能、自定义工具、通知、加密备份、恢复预览、隔离恢复和迁移状态。
 
 约束提供代理上下文；工具拦截规则独立执行。token 预算是本地用量账本，不是供应商金额账单。
+
+企业报告与发现导出可生成脱敏副本，处理已识别的凭据；企业历史只保存脱敏副本且不附原始流量正文。自定义、无标记的敏感内容仍需人工核对。首次安装不会自动生成任何报告或资产历史业务样本。
 
 ## 开始使用
 
@@ -65,11 +67,9 @@ LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 
 本版提供 Windows amd64 包。其他平台可从源码编译；跨平台 CI 的结果以对应运行记录为准。
 
-### 应用与数据库 Docker 部署（2.6.0）
+### 应用与数据库 Docker 部署（2.7.0）
 
-本版提供 Docker 部署模板与源码构建入口。发布时本机 Docker 引擎不可用，因此没有重新构建和验收正式 2.6.0 容器，本版附件不提供预构建镜像。此前 2.5 与 2.6.0-dev 的 Docker Desktop Linux amd64 本地记录不视为本次正式镜像验收；独立 Linux/macOS 宿主亦未验收。
-
-在已安装 Docker 的环境解压源码后执行：
+随版提供经本次离线逐层审查的既有 Linux amd64 镜像归档。其历史隔离验收在 Windows Docker Desktop 完成，包含空卷安装、登录、持久化重建、升级、加密备份与隔离恢复。本次发布时本机 Docker 引擎不可用，未重新运行容器；独立 Linux/macOS 宿主仍未验收。镜像保留原构建内容及标签，不把历史运行记录冒充本次重新构建。使用 Docker Desktop 的 Linux 引擎或 Linux Docker Engine，可从源码构建：
 
 ```powershell
 Copy-Item .env.example .env
@@ -79,7 +79,18 @@ docker compose -p diting up -d
 docker compose -p diting ps
 ```
 
-构建需要访问基础镜像与依赖源，不承诺离线可用。部署模板默认镜像名为 `diting:2.6.0-local`，PostgreSQL 使用 `postgres:16.15-alpine`。应用与数据库使用独立持久卷，新卷不预置业务数据或模型配置。
+GitHub 发行附件提供应用与 PostgreSQL 镜像归档。将部署包解压，在含 `docker-compose.yml` 的目录运行；镜像路径按实际保存位置填写：
+
+```powershell
+docker load -i DITING-2.7.0-linux-amd64-image.tar
+docker load -i PostgreSQL-16.15-linux-amd64-image.tar
+Copy-Item .env.example .env
+# 编辑 .env，填写自己的 POSTGRES_PASSWORD。
+docker compose -p diting --env-file .env up -d --no-build --wait
+docker compose -p diting --env-file .env ps
+```
+
+此方式不需要构建或下载已提供的镜像；首次安装仍需用户自行设置密码。镜像不包含数据库、业务数据或模型凭据。Docker 部署包与两个镜像归档均需保留；备份工具的宿主机 Python 依赖需另行安装，不承诺该依赖安装过程离线可用。
 
 打开 `http://127.0.0.1:8787` 初始化登录密码和模型。数据库自动创建空库；模型、任务、企业、资产、发现和对话均不预置。Compose 将 PostgreSQL 固定为 16.15，等待数据库健康后启动应用，应用健康检查也验证数据库连接。数据库不发布宿主端口；应用与录制代理仅映射本机 `8787/8788`，可通过 `.env` 更改端口。
 
@@ -99,6 +110,7 @@ docker compose -p diting logs --tail 100 postgres artex
 - 应用返回健康检查 503：数据库连接暂时不可用。先恢复数据库服务及连接，再检查应用健康状态；数据库健康后应用才会正常响应。
 - 应用报告凭据密钥不匹配：恢复该数据库对应的 `secrets.key`。不要生成新密钥覆盖原文件，也不要把密钥放入工作区。
 - Docker Desktop 在应用容器创建前提示 `dockerInference` 或 `engine.sock` 无法访问：这是 Docker Desktop 启动阶段的问题，[Docker 问题库有同类报告](https://github.com/docker/desktop-feedback/issues/554)。先退出 Desktop，按厂商说明恢复其运行目录；不要为此重置数据、注销 WSL 或删除业务卷。日志可能含敏感信息，分享前自行脱敏。
+- Windows 报 `bind: ... forbidden by its access permissions`，且端口没有监听者时，执行 `netsh interface ipv4 show excludedportrange protocol=tcp` 检查系统保留范围。为本机程序的 `-addr`，或 Compose `.env` 中的 `DITING_PORT` / `DITING_PROXY_PORT` 另选未保留的空闲端口；保持绑定 `127.0.0.1`。不要通过关闭防火墙或删除系统端口保留来绕过。
 
 ### 从源码构建
 
@@ -144,7 +156,7 @@ cp config.example.json config.json
 - 加密保护数据库静态凭据；应用运行时仍需解密使用。本地数据库连接配置和运行日志不属于上述数据库字段加密范围，仍需保管配置目录。
 - 从 2.3.x 升级至 2.4.0 前，先用旧版本备份工具制作完整加密备份，并保留旧程序、数据库连接配置和 JWT 密钥。2.4.0 会加密旧数据库中的凭据；2.3.x 不能直接读取这些密文。因此退回 2.3.x 时，需要恢复升级前的数据库与工作区备份，不能只替换旧二进制。恢复使用新的空库和新目录，保留原数据库以便核对。
 - 连接已有数据库会保留原有记录并执行幂等迁移。“首次为空白”指新建数据库，不会清空旧数据库。
-- 下载包可与发行页 `SHA256SUMS` 对比：`Get-FileHash .\artex-2.4.0-windows-amd64.zip -Algorithm SHA256`。
+- 下载包可与发行页 `SHA256SUMS` 对比：`Get-FileHash .\DITING-2.7.0-windows-amd64.zip -Algorithm SHA256`。
 
 ## 许可证与来源
 

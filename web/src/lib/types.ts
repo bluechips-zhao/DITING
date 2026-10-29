@@ -736,6 +736,28 @@ export interface FindingRetest {
   finished_at: string | null;
 }
 
+export interface FindingRetestComparison {
+  finding_id: string;
+  retest_id: string;
+  status: FindingRetest["status"];
+  verdict: FindingRetest["verdict"];
+  summary: string;
+  evidence: string;
+  created_at: string;
+  finished_at: string | null;
+  baseline: {
+    name: string;
+    status: string;
+    summary: string;
+    evidence: string;
+    evidence_version: number | null;
+    report_evidence_version: number | null;
+  } | null;
+  current_status: string;
+  current_evidence_version: number;
+  source_evidence_changed: boolean | null;
+}
+
 export interface Conversation {
   id: number;
   running?: boolean; // live server state, returned with the conversation list
@@ -1610,4 +1632,21 @@ export interface InterceptExecution {
   session: string;
   seq: number;
   items: Activity[];
+}
+export interface CompanyReportVersion {
+  id: string;
+  company_id: string;
+  template: "technical" | "executive";
+  snapshot_at: string;
+  created_at: string;
+  content?: string;
+}
+
+export interface AssetChange {
+  id: string;
+  asset_id: string;
+  kind: "baseline" | "created" | "updated";
+  previous: Record<string, unknown> | null;
+  current: Record<string, unknown>;
+  observed_at: string;
 }

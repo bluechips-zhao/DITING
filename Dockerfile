@@ -15,12 +15,12 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . ./
 COPY --from=frontend /src/web/out /src/server/webui/dist
-ARG VERSION=2.6.0
+ARG VERSION=2.7.0
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags embedui \
     -ldflags "-s -w -buildid= -X main.version=${VERSION}" -o /out/artex ./cmd/artex
 FROM node:22.23.1-bookworm-slim AS node-runtime
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm AS runtime
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -33,9 +33,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/cache/diting-playwright,sharing=locked \
     npm_config_proxy="${HTTP_PROXY:-}" npm_config_https_proxy="${HTTPS_PROXY:-}" \
     npm install -g --maxsockets=4 --prefer-offline @playwright/mcp@0.0.83 @playwright/cli@0.1.22 playwright@1.64.0 \
-    && playwright-cli --help && playwright install --with-deps chromium \
+    && playwright-cli --help \
+    && sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && for attempt in 1 2 3; do \
+         if PLAYWRIGHT_BROWSERS_PATH=/var/cache/diting-playwright PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 playwright install --with-deps chromium; then break; fi; \
+         if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+       done \
+    && mkdir -p /opt/playwright && cp -a /var/cache/diting-playwright/. /opt/playwright/ \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=backend /out/artex /app/artex

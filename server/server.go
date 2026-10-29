@@ -769,6 +769,7 @@ func (s *Server) Handler() http.Handler {
 
 	// asset system
 	mux.HandleFunc("GET /api/assets", s.listAssets)
+	mux.HandleFunc("GET /api/assets/{id}/history", s.assetHistory)
 	mux.HandleFunc("GET /api/assets/export", s.exportAssets)
 	mux.HandleFunc("GET /api/system/backup-tool", s.backupTool)
 	mux.HandleFunc("GET /api/assets/counts", s.assetCounts)
@@ -779,6 +780,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/companies", s.listCompanies)
 	mux.HandleFunc("POST /api/companies", s.createCompany)
 	mux.HandleFunc("GET /api/companies/{id}", s.getCompany)
+	mux.HandleFunc("GET /api/companies/{id}/report", s.companyReport)
+	mux.HandleFunc("POST /api/companies/{id}/reports", s.saveCompanyReport)
+	mux.HandleFunc("GET /api/companies/{id}/reports", s.companyReportHistory)
+	mux.HandleFunc("GET /api/companies/{id}/reports/{version}", s.companyReportVersion)
+	mux.HandleFunc("DELETE /api/companies/{id}/reports/{version}", s.deleteCompanyReportVersion)
 	mux.HandleFunc("DELETE /api/companies/{id}", s.deleteCompany)
 	mux.HandleFunc("POST /api/companies/{id}/scope", s.addCompanyScope)
 	mux.HandleFunc("POST /api/companies/reattribute", s.reattribute)
@@ -794,6 +800,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/exploration/findings/{id}/lineage", s.findingLineage)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/deepen", s.deepenFinding)
 	mux.HandleFunc("GET /api/exploration/findings/{id}/retests", s.listFindingRetests)
+	mux.HandleFunc("GET /api/exploration/findings/{id}/retests/{retest}/comparison", s.findingRetestComparison)
 	mux.HandleFunc("GET /api/exploration/findings/retests/active", s.listActiveFindingRetests)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/retests", s.startFindingRetest)
 	mux.HandleFunc("PATCH /api/exploration/findings/{id}", s.patchFinding)
@@ -2156,6 +2163,16 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	scope := q.Get("scope")
 	format := q.Get("format")
+	redacted, ok := exportRedaction(w, r)
+	if !ok {
+		return
+	}
+	switch format {
+	case "md-single", "md-zip", "csv", "json":
+	default:
+		writeErr(w, 400, "bad export format")
+		return
+	}
 
 	var ids []int64
 	var filter db.FindingFilter
@@ -2198,12 +2215,18 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.RemoveAll(stage)
-	if err = s.evidenceStore().StageFindingsExport(r.Context(), fs, stage, format == "md-zip"); err != nil {
+	if err = s.evidenceStore().StageFindingsExport(r.Context(), fs, stage, format == "md-zip" && !redacted); err != nil {
 		evidenceError(w, err)
 		return
 	}
 	now := time.Now()
 	stamp := now.Format("20060102-150405")
+	w.Header().Set("Cache-Control", "no-store")
+	if redacted {
+		fs = report.RedactedFindings(fs)
+		stamp += "-redacted"
+		w.Header().Set("X-DITING-Redacted", "true")
+	}
 	setDownload := func(contentType, filename string) {
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
@@ -2215,7 +2238,7 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(report.FindingsMarkdown(fs, now)))
 	case "md-zip":
 		path := filepath.Join(stage, "findings.zip")
-		if err := buildFindingsEvidenceZip(path, fs, stage, now); err != nil {
+		if err := buildFindingsEvidenceZip(path, fs, stage, now, redacted); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -2241,9 +2264,17 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 			out = append(out, findingFromDB(f, assets))
 		}
 		setDownload("application/json; charset=utf-8", "findings-"+stamp+".json")
+		var payload any = out
+		if redacted {
+			payload, err = report.RedactJSON(out)
+			if err != nil {
+				writeErr(w, 500, "redacted export failed")
+				return
+			}
+		}
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		_ = enc.Encode(payload)
 	default:
 		writeErr(w, 400, "bad format: "+format)
 	}
@@ -3940,7 +3971,8 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	md := report.Markdown(report.Input{
-		Title: t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
+		TaskID: taskID,
+		Title:  t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
 		AssetCounts: counts, Records: findings, Goals: goals, IntentStates: states,
 	})
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")

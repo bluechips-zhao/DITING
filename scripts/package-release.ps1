@@ -47,7 +47,7 @@ try {
     $env:CGO_ENABLED = '0'
     & go build -trimpath -tags embedui -ldflags "-s -w -buildid= -X main.version=$Version" -o (Join-Path $packageRoot 'artex.exe') ./cmd/artex
     if ($LASTEXITCODE -ne 0) { throw 'Go build failed' }
-    foreach ($name in @('start.bat', 'config.example.json', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+    foreach ($name in @('start.bat', 'config.example.json', 'README.md', 'AGENTS.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
         Copy-Item -LiteralPath (Join-Path $repoRoot $name) -Destination $packageRoot
     }
     foreach ($relative in @('scripts/backup.ps1', 'scripts/docker_backup.py', 'scripts/requirements-backup.txt', 'docs/DOCKER_BACKUP.md', 'docker-compose.yml', '.env.example')) {

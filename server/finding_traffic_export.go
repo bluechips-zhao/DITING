@@ -15,16 +15,27 @@ import (
 	"github.com/Autumn-27/artex/report"
 )
 
-func writeFindingsEvidenceZip(out io.Writer, findings []*db.DBFinding, stage string, now time.Time) error {
+func writeFindingsEvidenceZip(out io.Writer, findings []*db.DBFinding, stage string, now time.Time, redacted ...bool) error {
 	zw := zip.NewWriter(out)
-	if err := writeFindingsZipEntries(zw, findings, stage, now); err != nil {
+	if err := writeFindingsZipEntries(zw, findings, stage, now, redacted...); err != nil {
 		zw.Close()
 		return err
 	}
 	return zw.Close()
 }
 
-func writeFindingsZipEntries(zw *zip.Writer, findings []*db.DBFinding, stage string, now time.Time) error {
+func writeFindingsZipEntries(zw *zip.Writer, findings []*db.DBFinding, stage string, now time.Time, redacted ...bool) error {
+	share := len(redacted) > 0 && redacted[0]
+	if share {
+		findings = report.RedactedFindings(findings)
+		w, err := zw.Create("EXPORT-INFO.txt")
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "脱敏导出：隐藏可识别的凭据，不附原始请求/响应正文或二进制报文。来源 ID、版本和哈希指向原始证据，不代表本包包含原始报文。自定义、无标记的敏感内容仍需人工核对。\n"); err != nil {
+			return err
+		}
+	}
 	store := evidence.New(nil, nil, stage) // private export copy; not subject to GC
 	used := map[string]int{}
 	for _, f := range findings {
@@ -49,6 +60,9 @@ func writeFindingsZipEntries(zw *zip.Writer, findings []*db.DBFinding, stage str
 			}
 			if err = json.NewEncoder(w).Encode(b); err != nil {
 				return err
+			}
+			if share {
+				continue
 			}
 			for _, side := range []string{"request", "response"} {
 				if err := func() error {
@@ -89,12 +103,12 @@ func writeFindingsZipEntries(zw *zip.Writer, findings []*db.DBFinding, stage str
 	return nil
 }
 
-func buildFindingsEvidenceZip(path string, findings []*db.DBFinding, stage string, now time.Time) error {
+func buildFindingsEvidenceZip(path string, findings []*db.DBFinding, stage string, now time.Time, redacted ...bool) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	writeErr := writeFindingsEvidenceZip(f, findings, stage, now)
+	writeErr := writeFindingsEvidenceZip(f, findings, stage, now, redacted...)
 	syncErr := f.Sync()
 	closeErr := f.Close()
 	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {

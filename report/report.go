@@ -14,6 +14,7 @@ import (
 
 // Input bundles what the report needs.
 type Input struct {
+	TaskID       int64
 	Title        string
 	Goal         string
 	GeneratedAt  time.Time
@@ -52,6 +53,9 @@ var sevRank = map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, ""
 func Markdown(in Input) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# 渗透测试报告 — %s\n\n", nz(in.Title, "未命名任务"))
+	if in.TaskID > 0 {
+		fmt.Fprintf(&b, "- **来源任务 ID**：%d\n", in.TaskID)
+	}
 	fmt.Fprintf(&b, "- **任务目标**：%s\n", nz(in.Goal, "（未指定）"))
 	fmt.Fprintf(&b, "- **生成时间**：%s\n\n", in.GeneratedAt.Format("2006-01-02 15:04:05"))
 

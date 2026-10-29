@@ -257,6 +257,7 @@ export default function FindingsPage() {
   const [exportScope, setExportScope] = React.useState<"filtered" | "all" | "selected">("filtered");
   const [exportFormat, setExportFormat] = React.useState<"md-single" | "md-zip" | "csv" | "json">("md-single");
   const [exporting, setExporting] = React.useState(false);
+  const [exportRedacted, setExportRedacted] = React.useState(true);
 
   const toggleSelected = React.useCallback((id: string, checked: boolean) => {
     setSelectedIds((prev) => {
@@ -280,6 +281,7 @@ export default function FindingsPage() {
 
   // 打开导出弹窗时,若有勾选项则默认范围切到「选中」,否则「当前筛选」。
   function openExport() {
+    setExportRedacted(true);
     setExportScope(selectedIds.size > 0 ? "selected" : "filtered");
     setExportOpen(true);
   }
@@ -288,6 +290,7 @@ export default function FindingsPage() {
     setExporting(true);
     try {
       await api.exportFindings({
+        redact: exportRedacted,
         format: exportFormat,
         scope: exportScope,
         filters: { severity, status, vulnclass, task, query, sort },
@@ -1272,6 +1275,10 @@ export default function FindingsPage() {
             </div>
           </div>
 
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" checked={exportRedacted} onChange={event => setExportRedacted(event.target.checked)} disabled={exporting} className="mt-1" />
+            <span>脱敏导出<span className="mt-1 block text-muted-foreground text-xs">隐藏可识别的凭据，不附原始流量报文。取消后导出完整原文；分享前请核对自定义敏感内容。</span></span>
+          </label>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExportOpen(false)} disabled={exporting}>
               取消

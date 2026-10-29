@@ -1486,3 +1486,57 @@ CREATE TABLE IF NOT EXISTS task_evidence_candidates (
  UNIQUE(activity_id,detector)
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_candidate_task ON task_evidence_candidates(task_id,id);
+
+-- Explicitly saved, redacted enterprise report copies; not seeded business data.
+CREATE TABLE IF NOT EXISTS company_report_versions (
+ id BIGSERIAL PRIMARY KEY,
+ company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ template TEXT NOT NULL CHECK(template IN ('technical','executive')),
+ snapshot_at TIMESTAMPTZ NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ content TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_company_report_versions_scope ON company_report_versions(company_id,id DESC);
+
+-- Audit only selected inventory facts. Never copy auth, params, extra or bodies.
+CREATE OR REPLACE FUNCTION asset_history_projection(a jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE STRICT AS $$
+ SELECT jsonb_build_object(
+  'type',a->'type','company_id',a->>'company_id','company_source',a->'company_source',
+  'task_ids',(SELECT COALESCE(jsonb_agg(v),'[]'::jsonb) FROM jsonb_array_elements_text(a->'task_ids') ids(v)),
+  'domain',a->'domain','root_domain',a->'root_domain',
+  'ip',a->'ip','port',a->'port','bound_domains',a->'bound_domains','open_ports',a->'open_ports',
+  'record_type',a->'record_type','record_value',a->'record_value',
+  'bundle_id',a->'bundle_id','app_name',a->'app_name','category',a->'category',
+  'url',a->'url','service_type',a->'service_type','service_name',a->'service_name',
+  'status_code',a->'status_code','technologies',a->'technologies','method',a->'method')
+$$;
+CREATE TABLE IF NOT EXISTS asset_change_history (
+ id BIGSERIAL PRIMARY KEY,
+ asset_id BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL CHECK(kind IN ('baseline','created','updated')),
+ previous JSONB,
+ current JSONB NOT NULL,
+ observed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_asset_change_history_scope ON asset_change_history(asset_id,id DESC);
+CREATE OR REPLACE FUNCTION record_asset_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE before_value jsonb; after_value jsonb;
+BEGIN
+ after_value := asset_history_projection(to_jsonb(NEW));
+ IF TG_OP='INSERT' THEN
+  INSERT INTO asset_change_history(asset_id,kind,current) VALUES(NEW.id,'created',after_value);
+ ELSE
+  before_value := asset_history_projection(to_jsonb(OLD));
+  IF before_value IS DISTINCT FROM after_value THEN
+   INSERT INTO asset_change_history(asset_id,kind,previous,current) VALUES(NEW.id,'updated',before_value,after_value);
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_asset_change_history ON assets;
+CREATE TRIGGER trg_asset_change_history AFTER INSERT OR UPDATE ON assets FOR EACH ROW EXECUTE FUNCTION record_asset_change();
+INSERT INTO asset_change_history(asset_id,kind,current)
+ SELECT a.id,'baseline',asset_history_projection(to_jsonb(a)) FROM assets a
+ WHERE NOT EXISTS(SELECT 1 FROM asset_change_history h WHERE h.asset_id=a.id);

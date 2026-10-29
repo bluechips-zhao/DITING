@@ -7,6 +7,7 @@ import Link from "next/link";
 import { RotateCcwIcon } from "lucide-react";
 
 import { FindingRetestDialog } from "@/components/finding-retest-dialog";
+import { FindingRetestComparison } from "@/components/finding-retest-comparison";
 import { Markdown } from "@/components/markdown";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -45,8 +46,13 @@ export function FindingRetestPanel({
   const [items, setItems] = React.useState<FindingRetest[] | null>(null);
   const [error, setError] = React.useState("");
   const [open, setOpen] = React.useState(false);
+  const [comparisonId, setComparisonId] = React.useState<number | null>(null);
   const requestSeq = React.useRef(0);
   const previousItems = React.useRef<FindingRetest[]>([]);
+
+  React.useEffect(() => {
+    setItems(null); previousItems.current = []; setComparisonId(null); setError("");
+  }, [findingId]);
 
   const load = React.useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -143,6 +149,7 @@ export function FindingRetestPanel({
                   ) : (
                     <span className="text-muted-foreground text-xs">会话已删除</span>
                   )}
+                  <Button variant="outline" size="sm" onClick={() => setComparisonId(item.id)}>对比证据</Button>
                 </div>
                 {item.status === "completed" && item.summary ? (
                   <p className="whitespace-pre-wrap break-words text-sm">{item.summary}</p>
@@ -167,6 +174,7 @@ export function FindingRetestPanel({
             ))
           : null}
       </CardContent>
+      {comparisonId !== null ? <FindingRetestComparison key={`${findingId}:${comparisonId}`} findingId={findingId} retestId={comparisonId} onClose={() => setComparisonId(null)} /> : null}
       {open ? (
         <FindingRetestDialog
           findingId={findingId}

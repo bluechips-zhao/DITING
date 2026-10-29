@@ -14,6 +14,7 @@ import type {
   AgentTrigger,
   ArchiveBatchItem,
   Asset,
+  AssetChange,
   AssetInterceptRule,
   AssetInterceptRuleInput,
   Audit,
@@ -22,6 +23,7 @@ import type {
   ChatAttachment,
   CommandRecord,
   Company,
+  CompanyReportVersion,
   CompanyScopeMutation,
   CompanyScopeRule,
   Conversation,
@@ -41,6 +43,7 @@ import type {
   FindingGroupsPage,
   FindingQuery,
   FindingRetest,
+  FindingRetestComparison,
   FindingStats,
   FindingStatus,
   FindingsPage,
@@ -112,7 +115,7 @@ function getToken(): string | null {
   return localStorage.getItem("artex_token");
 }
 
-export async function http<T>(path: string, init?: RequestInit): Promise<T> {
+export async function http<T>(path: string, init?: RequestInit, responseType: "json" | "text" = "json"): Promise<T> {
   const token = getToken();
   const r = await fetch(`/api${path}`, {
     ...init,
@@ -144,6 +147,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   if (r.status === 204) return undefined as T;
+  if (responseType === "text") return (await r.text()) as T;
   return r.json();
 }
 
@@ -503,6 +507,18 @@ export const api = {
 
   // ---- companies (企业 + 资产范围；归属唯一来源) ----
   companies: () => get<Company[]>("/companies").then(arr),
+  assetHistory: (id: string, before?: string, signal?: AbortSignal) =>
+    http<AssetChange[]>(`/assets/${encodeURIComponent(id)}/history${before ? `?${new URLSearchParams({ before })}` : ""}`, { signal }),
+  saveCompanyReport: (id: string, template: "technical" | "executive") =>
+    post<CompanyReportVersion>(`/companies/${encodeURIComponent(id)}/reports?${new URLSearchParams({ template })}`),
+  companyReportHistory: (id: string, before?: string, signal?: AbortSignal) =>
+    http<CompanyReportVersion[]>(`/companies/${encodeURIComponent(id)}/reports${before ? `?${new URLSearchParams({ before })}` : ""}`, { signal }),
+  companyReportVersion: (id: string, version: string, signal?: AbortSignal) =>
+    http<CompanyReportVersion>(`/companies/${encodeURIComponent(id)}/reports/${encodeURIComponent(version)}`, { signal }),
+  deleteCompanyReportVersion: (id: string, version: string) =>
+    del<{ deleted: boolean }>(`/companies/${encodeURIComponent(id)}/reports/${encodeURIComponent(version)}`),
+  companyReport: (id: string, template: "technical" | "executive", redact: boolean, signal?: AbortSignal) =>
+    http<string>(`/companies/${encodeURIComponent(id)}/report?${new URLSearchParams({ template, redact: String(redact) })}`, { signal }, "text"),
   createCompany: (name: string, scope: CompanyScopeRule[]) =>
     post<{ id: number; created: boolean; scope_added?: number; scope_invalid?: number; scope_errors?: string[] }>(
       "/companies",
@@ -555,8 +571,10 @@ export const api = {
     scope: "filtered" | "all" | "selected";
     filters?: Omit<FindingQuery, "page" | "pageSize">;
     ids?: string[];
+    redact?: boolean;
   }) => {
     const p = new URLSearchParams({ format: opts.format, scope: opts.scope });
+    if (opts.redact) p.set("redact", "true");
     if (opts.scope === "selected") {
       p.set("ids", (opts.ids ?? []).join(","));
     } else if (opts.scope === "filtered" && opts.filters) {
@@ -669,6 +687,8 @@ export const api = {
     ),
   activeFindingRetests: () =>
     get<{ retests: ActiveFindingRetest[] }>("/exploration/findings/retests/active").then((r) => arr(r.retests)),
+  findingRetestComparison: (findingId: string, retestId: number) =>
+    get<FindingRetestComparison>(`/exploration/findings/${encodeURIComponent(findingId)}/retests/${retestId}/comparison`),
   startFindingRetest: (id: string, notes: string) =>
     post<{ retest: FindingRetest; created: boolean }>(`/exploration/findings/${encodeURIComponent(id)}/retests`, {
       notes,

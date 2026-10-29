@@ -69,6 +69,7 @@ func FindingsMarkdown(fs []*db.DBFinding, generatedAt time.Time) string {
 			fmt.Fprintf(&b, "- **类别**：%s\n", f.VulnClass)
 		}
 		fmt.Fprintf(&b, "- **状态**：%s\n", nz(f.Status, "pending"))
+		b.WriteString(findingSourceMarkdown(f))
 		if desc := strings.TrimSpace(f.TaskDescription); desc != "" {
 			fmt.Fprintf(&b, "- **所属任务**：%s\n", desc)
 		}
@@ -102,6 +103,7 @@ func SingleFindingMarkdown(f *db.DBFinding, generatedAt time.Time) string {
 	}
 	fmt.Fprintf(&b, "- **严重等级**：%s\n", nz(f.Severity, "info"))
 	fmt.Fprintf(&b, "- **状态**：%s\n", nz(f.Status, "pending"))
+	b.WriteString(findingSourceMarkdown(f))
 	if desc := strings.TrimSpace(f.TaskDescription); desc != "" {
 		fmt.Fprintf(&b, "- **所属任务**：%s\n", desc)
 	}
@@ -155,9 +157,9 @@ func FindingsCSV(fs []*db.DBFinding) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("\xEF\xBB\xBF") // UTF-8 BOM
 	w := csv.NewWriter(&buf)
-	_ = w.Write([]string{"ID", "名称", "类别", "严重等级", "状态", "所属任务", "发现时间", "概述", "流量证据数量", "流量证据ID"})
+	_ = w.Write([]string{"ID", "名称", "类别", "严重等级", "状态", "所属任务", "发现时间", "概述", "流量证据数量", "流量证据ID", "来源任务ID", "探索节点ID", "关联资产ID", "当前证据版本", "报告证据版本"})
 	for _, f := range items {
-		_ = w.Write([]string{
+		row := []string{
 			fmt.Sprintf("%d", f.ID),
 			findingTitle(f),
 			f.VulnClass,
@@ -167,10 +169,56 @@ func FindingsCSV(fs []*db.DBFinding) []byte {
 			f.CreatedAt.Format("2006-01-02 15:04:05"),
 			strings.TrimSpace(f.Summary),
 			fmt.Sprint(len(f.TrafficBindings)), findingTrafficIDs(f),
-		})
+			optionalSourceID(f.TaskID), optionalSourceID(f.NodeID), findingAssetIDs(f),
+			fmt.Sprint(f.EvidenceVersion), fmt.Sprint(f.ReportEvidenceVersion),
+		}
+		for i, value := range row {
+			if first := strings.TrimLeft(value, " \t\r\n"); first != "" && strings.ContainsRune("=+-@", rune(first[0])) {
+				row[i] = "'" + value
+			}
+		}
+		_ = w.Write(row)
 	}
 	w.Flush()
 	return buf.Bytes()
+}
+
+func optionalSourceID(id *int64) string {
+	if id == nil || *id <= 0 {
+		return ""
+	}
+	return fmt.Sprint(*id)
+}
+
+func findingAssetIDs(f *db.DBFinding) string {
+	ids := make([]string, 0, len(f.AssetIDs))
+	seen := map[int64]bool{}
+	for _, id := range f.AssetIDs {
+		if id > 0 && !seen[id] {
+			ids = append(ids, fmt.Sprint(id))
+			seen[id] = true
+		}
+	}
+	return strings.Join(ids, ",")
+}
+
+// Source IDs refer to local records; missing historical links stay unknown.
+func findingSourceMarkdown(f *db.DBFinding) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "- **发现记录 ID**：%d\n", f.ID)
+	if id := optionalSourceID(f.TaskID); id != "" {
+		fmt.Fprintf(&b, "- **来源任务 ID**：%s\n", id)
+	} else {
+		b.WriteString("- **来源任务 ID**：未关联或原任务已删除\n")
+	}
+	if id := optionalSourceID(f.NodeID); id != "" {
+		fmt.Fprintf(&b, "- **探索节点 ID**：%s\n", id)
+	}
+	if ids := findingAssetIDs(f); ids != "" {
+		fmt.Fprintf(&b, "- **关联资产 ID**：%s\n", ids)
+	}
+	fmt.Fprintf(&b, "- **证据版本**：%d；**报告使用的证据版本**：%d\n", f.EvidenceVersion, f.ReportEvidenceVersion)
+	return b.String()
 }
 
 func findingTrafficIDs(f *db.DBFinding) string {
