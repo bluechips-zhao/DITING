@@ -27,6 +27,13 @@ web/next-env.d.ts
 # docs
 /docs/*
 !/docs/DOCKER_BACKUP.md
+!/docs/README.md
+!/docs/INSTALLATION.md
+!/docs/DEVELOPMENT.md
+!/docs/DATA_AND_BACKUP.md
+!/docs/CHANGELOG.md
+!/docs/RELEASE_NOTES.md
+!/docs/ROADMAP.md
 
 # os
 .DS_Store

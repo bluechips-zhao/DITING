@@ -55,6 +55,9 @@ try {
         New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $target
     }
+    foreach ($document in @('README.md', 'INSTALLATION.md', 'DEVELOPMENT.md', 'DATA_AND_BACKUP.md', 'CHANGELOG.md', 'RELEASE_NOTES.md', 'ROADMAP.md')) {
+        Copy-Item -LiteralPath (Join-Path $repoRoot "docs/$document") -Destination (Join-Path $packageRoot "docs/$document")
+    }
     # Copy only committed skill files: never runtime additions, node_modules or browser state.
     $skillFiles = & git -C $repoRoot ls-files -- skills
     if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate committed skills' }

@@ -197,6 +197,10 @@ package_binary() {
   mkdir -p "$package_root/scripts" "$package_root/docs"
   cp scripts/backup.ps1 scripts/docker_backup.py scripts/requirements-backup.txt "$package_root/scripts/"
   cp docs/DOCKER_BACKUP.md "$package_root/docs/"
+  for document in README.md INSTALLATION.md DEVELOPMENT.md DATA_AND_BACKUP.md CHANGELOG.md RELEASE_NOTES.md ROADMAP.md; do
+    cp "docs/$document" "$package_root/docs/"
+  done
+  cp AGENTS.md "$package_root/"
   cp docker-compose.yml .env.example "$package_root/"
   cp LICENSE "$package_root/"
   if [ -f THIRD_PARTY_NOTICES.md ]; then cp THIRD_PARTY_NOTICES.md "$package_root/"; fi
