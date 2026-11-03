@@ -12,7 +12,7 @@ LLM 驱动的自主渗透测试工作台 · Go + Next.js + PostgreSQL
 
 | 使用方式 | 下载与说明 |
 | --- | --- |
-| Windows amd64 | [Windows 安装包](https://github.com/bluechips-zhao/DITING/releases/download/v2.7.0/artex-2.7.0-windows-amd64.zip)，另需自己的 PostgreSQL |
+| Windows amd64 | [Windows 安装包](https://github.com/bluechips-zhao/DITING/releases/download/v2.7.0/DITING-2.7.0-windows-amd64.zip)，另需自己的 PostgreSQL |
 | Docker 应用与数据库 | [部署包](https://github.com/bluechips-zhao/DITING/releases/download/v2.7.0/DITING-2.7.0-docker-deployment.zip) + [应用镜像](https://github.com/bluechips-zhao/DITING/releases/download/v2.7.0/DITING-2.7.0-linux-amd64-image.tar) + [PostgreSQL 共享镜像](https://github.com/bluechips-zhao/DITING/releases/download/v2.7.0/PostgreSQL-16.15-linux-amd64-image.tar)；[操作步骤](docs/INSTALLATION.md#docker) |
 | 源码构建 | 发行页底部的 **Source code** 或 Git 标签；[构建说明](docs/DEVELOPMENT.md) |
 
