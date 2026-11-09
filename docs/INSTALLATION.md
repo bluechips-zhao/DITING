@@ -37,7 +37,7 @@
 
 ### 应用与数据库 Docker 部署（2.7.0）
 
-随版提供经本次离线逐层审查的既有 Linux amd64 镜像归档。其历史隔离验收在 Windows Docker Desktop 完成，包含空卷安装、登录、持久化重建、升级、加密备份与隔离恢复。本次发布时本机 Docker 引擎不可用，未重新运行容器；独立 Linux/macOS 宿主仍未验收。镜像保留原构建内容及标签，不把历史运行记录冒充本次重新构建。使用 Docker Desktop 的 Linux 引擎或 Linux Docker Engine，可从源码构建：
+2.8 Linux amd64 镜像由固定的 v2.8.0 源码编译应用，复用已发布 2.7 的运行层；已在 GitHub Ubuntu runner 完成空库、鉴权和内嵌页面检查，并校验镜像各层摘要及选定敏感路径。镜像标签为 diting:2.8.0-local。本机 Docker 引擎未参与本次运行；独立 Linux 原生包、macOS 和其他架构仍未验收。也可从源码构建：
 
 ```powershell
 Copy-Item .env.example .env
