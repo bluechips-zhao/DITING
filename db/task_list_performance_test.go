@@ -115,3 +115,53 @@ VALUES ($1,'goal','{}','met'), ($1,'goal','{}','open')`, task.ExplorationID); er
 		t.Fatalf("unexpected goal metrics: %+v", metrics.Goals)
 	}
 }
+
+func TestTaskListFindingMetricsSkewAndIsolation(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) - skipping", err)
+	}
+	defer d.Close()
+	marker := fmt.Sprintf("finding-metrics-%d", time.Now().UnixNano())
+	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM findings WHERE vulnclass=$1`, marker) })
+	tasks := make([]*Task, 4)
+	for i := range tasks {
+		tasks[i], err = d.CreateTask(marker, "goal", nil, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := tasks[i].ID
+		t.Cleanup(func() { _ = d.DeleteTask(id) })
+	}
+	if _, err := d.Exec(`INSERT INTO findings(task_id,vulnclass,severity)
+		SELECT $1,$2,'low' FROM generate_series(1,5000)`, tasks[0].ID, marker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO findings(task_id,vulnclass,severity) VALUES
+		($1,$4,'critical'),($1,$4,'high'),($1,$4,'medium'),($1,$4,'unknown'),
+		($2,$4,'high'),($3,$4,'critical'),(NULL,$4,'critical')`,
+		tasks[0].ID, tasks[1].ID, tasks[3].ID, marker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`UPDATE tasks SET deleted_at=now() WHERE id=$1`, tasks[3].ID); err != nil {
+		t.Fatal(err)
+	}
+	all, err := d.TaskListMetricsAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []FindingSeverityCounts{
+		{Critical: 1, High: 1, Medium: 1, Low: 5000},
+		{High: 1},
+		{},
+	}
+	for i, expected := range want {
+		got, ok := all[tasks[i].ExplorationID]
+		if !ok || got.Findings != expected {
+			t.Errorf("task %d findings=%+v present=%v, want %+v", i, got.Findings, ok, expected)
+		}
+	}
+	if _, ok := all[tasks[3].ExplorationID]; ok {
+		t.Error("soft-deleted task leaked into live metrics")
+	}
+}

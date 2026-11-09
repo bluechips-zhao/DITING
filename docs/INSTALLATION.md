@@ -50,7 +50,7 @@ docker compose -p diting ps
 GitHub 发行附件提供应用与 PostgreSQL 镜像归档。将部署包解压，在含 `docker-compose.yml` 的目录运行；镜像路径按实际保存位置填写：
 
 ```powershell
-docker load -i DITING-2.7.0-linux-amd64-image.tar
+docker load -i DITING-2.8.0-linux-amd64-image.tar
 docker load -i PostgreSQL-16.15-linux-amd64-image.tar
 Copy-Item .env.example .env
 # 编辑 .env，填写自己的 POSTGRES_PASSWORD。

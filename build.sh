@@ -168,7 +168,7 @@ package_binary() {
   binary="$1"
   goos="$2"
   goarch="$3"
-  package_name="artex-${ARTEX_BUILD_VERSION}-${goos}-${goarch}"
+  package_name="DITING-${ARTEX_BUILD_VERSION}-${goos}-${goarch}"
   package_root="${ARTEX_PACKAGE_DIR}/${package_name}"
   archive="${ARTEX_PACKAGE_DIR}/${package_name}.zip"
 

@@ -14,7 +14,7 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$')
 if ($Version -ne $frontendVersion) {
     throw 'Package version must match web/package.json; update source metadata before packaging.'
 }
-$packageRoot = Join-Path $repoRoot "dist/artex-$Version-windows-amd64"
+$packageRoot = Join-Path $repoRoot "dist/DITING-$Version-windows-amd64"
 $archivePath = "$packageRoot.zip"
 if ((Test-Path -LiteralPath $packageRoot) -or (Test-Path -LiteralPath $archivePath)) {
     throw 'Output already exists. Save and move it before rebuilding this version.'

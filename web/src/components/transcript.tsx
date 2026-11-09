@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/utils";
+import { observeNearViewportOnce } from "@/lib/observe-near-viewport";
 import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,15 +63,7 @@ function useInView(rootMargin = "400px"): [React.RefObject<HTMLDivElement | null
       setInView(true);
       return;
     }
-    const root = el.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null;
-    const ob = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) setInView(true);
-      },
-      { root, rootMargin },
-    );
-    ob.observe(el);
-    return () => ob.disconnect();
+    return observeNearViewportOnce(el, rootMargin, () => setInView(true));
   }, [inView, rootMargin]);
   return [ref, inView];
 }
@@ -451,7 +444,7 @@ function ToolBlock({
     // User bubbles load their full text lazily. Allow their initial layout to
     // settle, but stop anchoring immediately if the user interacts or after 2s.
     const observer = new ResizeObserver(center);
-    observer.observe(el.parentElement ?? el);
+    observer.observe(el.closest('[data-transcript-content]') ?? el.parentElement ?? el);
     observer.observe(viewport);
     const stop = () => observer.disconnect();
     viewport.addEventListener("wheel", stop, { passive: true, once: true });
@@ -719,8 +712,18 @@ function ExecView({
   );
   return (
     <div className="flex flex-col">
-      {groupSteps(activity, !!chat).map((g) =>
-        g.type === "round" ? (
+      {groupSteps(activity, !!chat).map((g) => (
+        <div
+          key={g.type + g.key}
+          data-transcript-seq={g.key}
+          className="flow-root min-w-0"
+          // Keep every group in the DOM and searchable. Approval focus uses
+          // exact geometry, so it bypasses offscreen layout containment.
+          style={activity.length >= 200 && focusedSeq == null ? {
+            contentVisibility: "auto", containIntrinsicSize: "auto 100px",
+          } : undefined}
+        >
+        {g.type === "round" ? (
           <div key={"r" + g.key} className="my-2 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
             <span className="h-px flex-1 bg-border" />
             {g.label}
@@ -742,8 +745,9 @@ function ExecView({
           <InterceptCard key={"ic" + g.key} step={g.step} getDetail={getDetail} />
         ) : (
           <MessageBlock key={"m" + g.key} group={g} getDetail={getDetail} showWorker={showWorker} />
-        ),
-      )}
+        )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -779,7 +783,7 @@ export function Transcript({
     return () => observer.disconnect();
   }, [focusedSeq]);
   return (
-    <div ref={transcriptRef} className="flex flex-col gap-1" style={focusPadding ? { paddingBlock: focusPadding } : undefined}>
+    <div ref={transcriptRef} data-transcript-content className="flex flex-col gap-1" style={focusPadding ? { paddingBlock: focusPadding } : undefined}>
       <ExecView activity={activity} taskId={taskId} chat={chat} fetchDetail={fetchDetail} focusedSeq={focusedSeq} />
       {live && (
         <div className="flex items-center gap-2 pl-2 pt-1 text-xs text-muted-foreground">

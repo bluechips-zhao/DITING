@@ -31,6 +31,7 @@ import type {
   CoverageAssetRefs,
   CoverageGraphData,
   DailyTokenBucket,
+  DashboardTaskSummary,
   DeleteTaskOptions,
   DeleteTaskResult,
   Edge,
@@ -245,6 +246,7 @@ export const api = {
   // ---- tasks ----
   tasks: () =>
     get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
+  dashboardTasks: () => get<DashboardTaskSummary>("/dashboard/tasks"),
   task: (id: string) => get<Task>(`/tasks/${encodeURIComponent(id)}`),
   createTask: (input: {
     name?: string;

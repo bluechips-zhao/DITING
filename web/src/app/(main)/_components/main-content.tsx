@@ -36,6 +36,7 @@ export function MainContent({ children }: { children: ReactNode }) {
   const fullBleed = path.startsWith("/function/tasks/") || path === "/chat";
   return (
     <>
+      <a className="workspace-skip" href="#workspace-main">跳到主要内容</a>
       <header className="workspace-header sticky top-0 z-40 flex shrink-0 items-center gap-3 px-4 lg:px-7">
         <div className="flex min-w-0 items-center gap-3">
           <SidebarTrigger aria-label="展开或收起导航" />
@@ -68,6 +69,9 @@ export function MainContent({ children }: { children: ReactNode }) {
       </header>
       <div
         id="workspace-main"
+        role="main"
+        tabIndex={-1}
+        aria-label={current?.title ?? "工作台内容"}
         className={
           fullBleed
             ? "task-workspace min-h-0 min-w-0 flex-1"

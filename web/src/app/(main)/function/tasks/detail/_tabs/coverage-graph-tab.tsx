@@ -16,6 +16,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -25,12 +26,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { api } from "@/lib/api";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type { CoverageAssetRef, CoverageAssetRefs, CoverageGraphEdge, CoverageGraphNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // 每个父节点下、同一类型的子节点默认展示的数量；超出折叠，"展示更多"每次再拉这么多。
-const FOLD_LIMIT = 20;
-const FOLD_STEP = 20;
+import { computeVisible, FOLD_LIMIT, FOLD_STEP, type FoldNode, type RenderNode } from "@/lib/coverage-graph";
 
 type Kind = CoverageGraphNode["kind"];
 
@@ -88,92 +89,6 @@ const FOLD_ICON = svgUri(
 
 // ---------------------------------------------------------------------------
 // Folding: full graph → currently-visible node/edge set (自顶向下级联折叠)。
-// ---------------------------------------------------------------------------
-type FoldNode = {
-  fold: true;
-  key: string;
-  groupId: string;
-  parentKey: string;
-  kind: Kind;
-  hidden: CoverageGraphNode[];
-};
-type AssetRenderNode = { fold: false; key: string; kind: Kind; node: CoverageGraphNode };
-type RenderNode = AssetRenderNode | FoldNode;
-
-function sortChildren(a: CoverageGraphNode, b: CoverageGraphNode): number {
-  if (a.tested !== b.tested) return a.tested ? -1 : 1;
-  return (a.label || "").localeCompare(b.label || "");
-}
-
-function computeVisible(
-  nodes: CoverageGraphNode[],
-  edges: CoverageGraphEdge[],
-  expanded: Map<string, number>,
-): { renderNodes: RenderNode[]; renderEdges: CoverageGraphEdge[] } {
-  const byKey = new Map(nodes.map((n) => [n.key, n]));
-  const parentOf = new Map<string, string>();
-  const childrenOf = new Map<string, string[]>();
-  for (const e of edges) {
-    if (!byKey.has(e.src) || !byKey.has(e.dst)) continue;
-    if (!parentOf.has(e.src)) parentOf.set(e.src, e.dst);
-    const arr = childrenOf.get(e.dst);
-    if (arr) arr.push(e.src);
-    else childrenOf.set(e.dst, [e.src]);
-  }
-
-  const renderNodes: RenderNode[] = [];
-  const visible = new Set<string>();
-  const foldNodes: FoldNode[] = [];
-
-  const queue: string[] = [];
-  for (const n of nodes) {
-    if (!parentOf.has(n.key)) {
-      queue.push(n.key);
-      visible.add(n.key);
-    }
-  }
-
-  for (let qi = 0; qi < queue.length; qi++) {
-    const parent = queue[qi];
-    const kids = childrenOf.get(parent) ?? [];
-    if (kids.length === 0) continue;
-    const groups = new Map<Kind, CoverageGraphNode[]>();
-    for (const ck of kids) {
-      const cn = byKey.get(ck);
-      if (!cn) continue;
-      const g = groups.get(cn.kind);
-      if (g) g.push(cn);
-      else groups.set(cn.kind, [cn]);
-    }
-    for (const [kind, arr] of groups) {
-      arr.sort(sortChildren);
-      const groupId = `${parent}::${kind}`;
-      const shown = expanded.get(groupId) ?? FOLD_LIMIT;
-      const visibleChildren = arr.slice(0, shown);
-      const hidden = arr.slice(shown);
-      for (const c of visibleChildren) {
-        if (!visible.has(c.key)) {
-          visible.add(c.key);
-          queue.push(c.key);
-        }
-      }
-      if (hidden.length > 0) {
-        foldNodes.push({ fold: true, key: `fold:${groupId}`, groupId, parentKey: parent, kind, hidden });
-      }
-    }
-  }
-
-  for (const n of nodes) {
-    if (visible.has(n.key)) renderNodes.push({ fold: false, key: n.key, kind: n.kind, node: n });
-  }
-  const renderEdges: CoverageGraphEdge[] = edges.filter((e) => visible.has(e.src) && visible.has(e.dst));
-  for (const f of foldNodes) {
-    renderNodes.push(f);
-    renderEdges.push({ src: f.key, dst: f.parentKey });
-  }
-  return { renderNodes, renderEdges };
-}
-
 // ---------------------------------------------------------------------------
 // G6 数据映射。自定义字段放节点顶层（G6 v5 官方 force 示例约定：style/layout 回调直接读 d.<field>）。
 // ---------------------------------------------------------------------------
@@ -298,10 +213,12 @@ function AssetSheet({
   node,
   taskId,
   onOpenChange,
+  onReturnFocus,
 }: {
   node: CoverageGraphNode | null;
   taskId: string;
   onOpenChange: (open: boolean) => void;
+  onReturnFocus: () => void;
 }) {
   const meta = node ? kindMeta[node.kind] : null;
   const Icon = meta?.icon;
@@ -326,7 +243,7 @@ function AssetSheet({
   }, [node, taskId]);
   return (
     <Sheet open={node !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
+      <SheetContent onCloseAutoFocus={event => {event.preventDefault();onReturnFocus();}} side="right" className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
         {node && meta && Icon && (
           <>
             <SheetHeader className="border-b p-4">
@@ -394,22 +311,54 @@ function AssetSheet({
   );
 }
 
+function CoverageNodePicker({ nodes, onPick }: { nodes: CoverageGraphNode[]; onPick: (node: CoverageGraphNode, target: HTMLButtonElement) => void }) {
+  const [query, setQuery] = React.useState("");
+  const [page, setPage] = React.useState(0);
+  const filtered = React.useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return needle ? nodes.filter(node => node.label.toLocaleLowerCase().includes(needle)) : nodes;
+  }, [nodes, query]);
+  const pages = Math.max(1, Math.ceil(filtered.length / 50));
+  const current = Math.min(page, pages - 1);
+  return <div className="flex flex-col gap-2 p-3">
+    <Input aria-label="搜索节点名称" placeholder="按名称搜索全部节点" value={query} onChange={event => {setQuery(event.target.value);setPage(0);}} />
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span role="status">共 {filtered.length} 个节点 · 第 {current + 1}/{pages} 页</span>
+      <div className="flex gap-1">
+        <Button size="sm" variant="outline" disabled={current === 0} onClick={() => setPage(current - 1)}>上一页</Button>
+        <Button size="sm" variant="outline" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>下一页</Button>
+      </div>
+    </div>
+    {!filtered.length && <p className="text-muted-foreground py-3 text-sm">没有匹配的节点</p>}
+    {filtered.slice(current * 50, (current + 1) * 50).map(node => {
+      const meta = kindMeta[node.kind]; const Icon = meta.icon;
+      return <button key={node.key} data-coverage-node type="button" onClick={event => onPick(node,event.currentTarget)} className="hover:bg-accent flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm">
+        <span className={cn("flex size-5 shrink-0 items-center justify-center rounded",node.tested?meta.iconBg:"bg-neutral-400 dark:bg-neutral-600")}><Icon className="size-3 text-white"/></span>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={node.label}>{node.label}</span>
+        {node.tested && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500"/>}
+      </button>;
+    })}
+  </div>;
+}
+
 function FoldSheet({
   fold,
   onOpenChange,
   onShowMore,
   onPick,
+  onReturnFocus,
 }: {
   fold: FoldNode | null;
   onOpenChange: (open: boolean) => void;
   onShowMore: (groupId: string) => void;
   onPick: (n: CoverageGraphNode) => void;
+  onReturnFocus: () => void;
 }) {
   const meta = fold ? kindMeta[fold.kind] : null;
   const Icon = meta?.icon;
   return (
     <Sheet open={fold !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
+      <SheetContent onCloseAutoFocus={event => {event.preventDefault();onReturnFocus();}} side="right" className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
         {fold && meta && Icon && (
           <>
             <SheetHeader className="border-b p-4">
@@ -419,29 +368,7 @@ function FoldSheet({
               <p className="text-muted-foreground text-xs">已测优先展示。点「展示更多」把下一批拉进图里。</p>
             </SheetHeader>
             <ScrollArea className="min-h-0 flex-1">
-              <div className="flex flex-col gap-1 p-3">
-                {fold.hidden.map((n) => (
-                  <button
-                    key={n.key}
-                    type="button"
-                    onClick={() => onPick(n)}
-                    className="hover:bg-accent flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm"
-                  >
-                    <span
-                      className={cn(
-                        "flex size-5 shrink-0 items-center justify-center rounded",
-                        n.tested ? meta.iconBg : "bg-neutral-400 dark:bg-neutral-600",
-                      )}
-                    >
-                      <Icon className="size-3 text-white" />
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs" title={n.label}>
-                      {n.label}
-                    </span>
-                    {n.tested && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
-                  </button>
-                ))}
-              </div>
+              <CoverageNodePicker key={fold.key} nodes={fold.hidden} onPick={onPick}/>
             </ScrollArea>
             <div className="border-t p-3">
               <Button className="w-full" variant="outline" onClick={() => onShowMore(fold.groupId)}>
@@ -464,10 +391,26 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   const [expanded, setExpanded] = React.useState<Map<string, number>>(new Map());
   const [selectedAsset, setSelectedAsset] = React.useState<CoverageGraphNode | null>(null);
   const [selectedFoldId, setSelectedFoldId] = React.useState<string | null>(null);
+  const [nodeListOpen, setNodeListOpen] = React.useState(false);
+  const [zoomPercent, setZoomPercent] = React.useState(100);
+  const dark = usePreferencesStore(state => state.resolvedThemeMode === "dark");
+  const darkRef = React.useRef(dark);
+  darkRef.current = dark;
   const [loading, setLoading] = React.useState(true);
+  const [dataError, setDataError] = React.useState<string | null>(null);
+  const requestVersion = React.useRef(0);
+  const [rendering, setRendering] = React.useState(false);
+  const [graphError, setGraphError] = React.useState<string | null>(null);
+  const renderQueues = React.useRef(new WeakMap<G6Graph, { running: boolean; pending: boolean; topology?: string }>());
 
   const containerRef = React.useRef<HTMLDivElement>(null);
   const graphRef = React.useRef<G6Graph | null>(null);
+  const focusReturn = React.useRef<HTMLElement | null>(null);
+  const nodeListButton = React.useRef<HTMLButtonElement | null>(null);
+  const restoreFocus = React.useCallback(() => {
+    const target = focusReturn.current;
+    (target?.isConnected ? target : nodeListButton.current)?.focus();
+  }, []);
   // click 处理需要最新的 key→RenderNode 映射（G6 事件回调闭包外读 ref）。
   const renderMapRef = React.useRef<Map<string, RenderNode>>(new Map());
   const gDataRef = React.useRef<{ nodes: G6NodeDatum[]; edges: { source: string; target: string }[] }>({
@@ -476,24 +419,30 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   });
 
   const fetchGraph = React.useCallback(() => {
+    const version = ++requestVersion.current;
     setLoading(true);
     api
       .taskCoverageGraph(taskId)
       .then((g) => {
+        if (version !== requestVersion.current) return;
+        setDataError(null);
         // 资产覆盖度功能关闭(B1)：仍出图(范围内资产/company 关联依旧可见)，但抹平
         // tested 状态——不显示测试进度、不做已测高亮。
         const nodes = coverageEnabled ? (g.nodes ?? []) : (g.nodes ?? []).map((n) => ({ ...n, tested: false }));
         setData({ nodes, edges: g.edges ?? [] });
       })
-      .catch(() => {
-        /* 保留上一次数据 */
-      })
-      .finally(() => setLoading(false));
+      .catch(() => {if(version === requestVersion.current)setDataError("资产图读取失败，请重试；已保留上次数据。");})
+      .finally(() => {if(version === requestVersion.current)setLoading(false);});
   }, [taskId, coverageEnabled]);
 
   React.useEffect(() => {
     fetchGraph();
+    return () => {requestVersion.current++;};
   }, [fetchGraph]);
+  const sourceNodesByKey = React.useMemo(() => new Map((data?.nodes ?? []).map(node => [node.key,node])), [data]);
+  React.useEffect(() => {
+    setSelectedAsset(current => current ? sourceNodesByKey.get(current.key) ?? null : null);
+  }, [sourceNodesByKey]);
 
   const { renderNodes, renderEdges } = React.useMemo(
     () =>
@@ -503,18 +452,14 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
     [data, expanded],
   );
 
-  // 结构签名：只在可见节点/边集合变化时重建图 + 重跑布局，避免无谓抖动。
-  const sig = React.useMemo(
-    () =>
-      `${renderNodes.map((n) => `${n.key}:${n.fold ? "f" : n.node.tested ? "t" : "u"}`).sort().join(",")}|${renderEdges.length}`,
-    [renderNodes, renderEdges],
-  );
-
-  // 维护 gDataRef + renderMapRef（供事件与图数据应用读取）。
-  gDataRef.current = {
+  const graphData = React.useMemo(() => ({
     nodes: toG6Nodes(renderNodes),
-    edges: renderEdges.map((e) => ({ source: e.src, target: e.dst })),
-  };
+    edges: renderEdges.map((edge) => ({ source: edge.src, target: edge.dst })),
+  }), [renderNodes, renderEdges]);
+  // Include labels, scope, hidden counts and exact edge endpoints. The previous
+  // key/edge-count signature missed changes that kept the same item counts.
+  const sig = React.useMemo(() => JSON.stringify({graphData,dark}), [graphData,dark]);
+  gDataRef.current = graphData;
   const rmap = new Map<string, RenderNode>();
   for (const rn of renderNodes) rmap.set(rn.key, rn);
   renderMapRef.current = rmap;
@@ -522,13 +467,39 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   const applyData = React.useCallback(() => {
     const graph = graphRef.current;
     if (!graph || graph.destroyed) return;
-    graph.setData(gDataRef.current);
-    // render() 异步跑 d3-force 布局;若组件在布局落地前被卸载/销毁,g6 会在已清空的
-    // context 上访问 transform 抛错(见 runtime/layout transformDataAfterLayout)。这是纯
-    // teardown 竞态,吞掉它,不影响功能;真正的渲染错误(图未销毁)仍打日志。
-    void graph.render().catch((err) => {
-      if (!graph.destroyed) console.error("[coverage-graph] render:", err);
-    });
+    let queue = renderQueues.current.get(graph);
+    if (!queue) {
+      queue = { running: false, pending: false };
+      renderQueues.current.set(graph, queue);
+    }
+    queue.pending = true;
+    if (queue.running) return;
+    queue.running = true;
+    const state = queue;
+    setRendering(true);
+    void (async () => {
+      try {
+        while (state.pending && !graph.destroyed && graphRef.current === graph) {
+          state.pending = false;
+          const snapshot = gDataRef.current;
+          const topology = JSON.stringify({nodes:snapshot.nodes.map(node => [node.id,node.kind,node.size]),edges:snapshot.edges});
+          graph.setData(snapshot);
+          try {
+            // Compute the same 300 force iterations before drawing, instead of
+            // repainting thousands of labels on every simulation tick.
+            if (snapshot.nodes.length && state.topology !== topology) await graph.render();
+            else await graph.draw();
+            state.topology = topology;
+            if (!graph.destroyed && graphRef.current === graph) setGraphError(null);
+          } catch {
+            if (!graph.destroyed && graphRef.current === graph) setGraphError("资产图布局失败，请刷新重试。");
+          }
+        }
+      } finally {
+        state.running = false;
+        if (!graph.destroyed && graphRef.current === graph) setRendering(false);
+      }
+    })();
   }, []);
 
   // 建图（一次）。动态 import 避开 SSR/静态导出期的 window 依赖。
@@ -541,8 +512,10 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
       graph = new Graph({
         container: containerRef.current,
         autoResize: true,
-        autoFit: "view",
-        background: "#f0f2f7",
+        autoFit: { type: "view", options: { when: "always" }, animation: false },
+        padding: 24,
+        animation: false,
+        background: "transparent",
         node: {
           style: {
             size: (d: unknown) => nd(d).size,
@@ -556,9 +529,9 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
             labelText: (d: unknown) => nd(d).lbl,
             labelFontSize: 10,
             labelPlacement: "bottom",
-            labelFill: "#475569",
+            labelFill: () => darkRef.current ? "#cbd5e1" : "#475569",
             labelBackground: true,
-            labelBackgroundFill: "rgba(255,255,255,0.75)",
+            labelBackgroundFill: () => darkRef.current ? "rgba(17,20,27,0.85)" : "rgba(255,255,255,0.75)",
             labelBackgroundRadius: 3,
             labelPadding: [1, 3],
           },
@@ -568,6 +541,9 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
         },
         layout: {
           type: "d3-force",
+          animation: false,
+          preLayout: true,
+          iterations: 300,
           collide: { radius: (d: unknown) => (nd(d).size ? nd(d).size : 20) + 8 },
           link: {
             distance: (edge: unknown) => {
@@ -583,7 +559,10 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
             strength: (d: unknown) => (nd(d).kind === "endpoint" || nd(d).fold ? -60 : -200),
           },
         },
-        behaviors: ["drag-element-force", "drag-canvas", "zoom-canvas"],
+        behaviors: [{type:"drag-element",animation:false}, {type:"drag-canvas",animation:false}, {type:"zoom-canvas",animation:false}],
+      });
+      graph.on("aftertransform", () => {
+        if (graph && !graph.destroyed) setZoomPercent(Math.round(graph.getZoom() * 100));
       });
       graph.on("node:click", (evt: unknown) => {
         const id = (evt as { target?: { id?: string } }).target?.id;
@@ -591,7 +570,7 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
         const rn = renderMapRef.current.get(id);
         if (!rn) return;
         if (rn.fold) setSelectedFoldId(rn.key);
-        else setSelectedAsset(rn.node);
+        else {focusReturn.current = nodeListButton.current;setSelectedAsset(rn.node);}
       });
       graphRef.current = graph;
       applyData();
@@ -636,12 +615,11 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   const inScope = data?.nodes.filter((n) => n.in_scope).length ?? 0;
 
   return (
-    <div className="relative h-full w-full">
-      <div ref={containerRef} className="h-full w-full" />
+    <div className="flex h-full w-full flex-col">
 
       {/* 图例 + 统计 + 刷新（叠加层） */}
-      <div className="bg-card/95 pointer-events-auto absolute top-3 left-3 flex max-w-[340px] flex-col gap-2.5 rounded-lg border p-3 text-xs shadow-sm backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
+      <div className="bg-card flex shrink-0 flex-col gap-2 border-b p-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           {total > 0 ? (
             <span className="text-muted-foreground">
               范围内 <span className="text-foreground font-semibold tabular-nums">{inScope}</span>
@@ -656,10 +634,20 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
           ) : (
             <span className="text-muted-foreground">{loading ? "加载中…" : "暂无范围内资产（先锚定任务范围）"}</span>
           )}
-          <Button variant="ghost" size="icon" className="size-6" onClick={fetchGraph} title="刷新">
+          <div className="ml-auto flex flex-wrap items-center gap-1">
+            <Button variant="outline" size="sm" ref={nodeListButton} aria-expanded={nodeListOpen} aria-controls="coverage-node-list" onClick={event => {focusReturn.current=event.currentTarget;setNodeListOpen(value => !value);}}>节点列表</Button>
+            <Button variant="outline" size="sm" onClick={() => {const graph=graphRef.current;if(graph&&!graph.destroyed)void graph.fitView({when:"always"},false).catch(()=>setGraphError("画布适应失败，请重试。"));}}>适应画布</Button>
+            <Button variant="outline" size="sm" aria-label="放大资产图" onClick={() => {const graph=graphRef.current;if(graph&&!graph.destroyed)void graph.zoomBy(1.25,false).catch(()=>setGraphError("缩放失败，请重试。"));}}>＋</Button>
+            <Button variant="outline" size="sm" aria-label="缩小资产图" onClick={() => {const graph=graphRef.current;if(graph&&!graph.destroyed)void graph.zoomBy(0.8,false).catch(()=>setGraphError("缩放失败，请重试。"));}}>－</Button>
+            <span aria-label="画布缩放比例" className="min-w-10 text-center tabular-nums text-muted-foreground">{zoomPercent}%</span>
+          <Button variant="ghost" size="icon" className="size-6" onClick={fetchGraph} title="刷新" aria-label="刷新资产图" disabled={loading}>
             <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
           </Button>
+          </div>
         </div>
+        {rendering && <span role="status" className="text-muted-foreground">正在布局资产图…</span>}
+        {dataError && <p role="alert" className="text-destructive">{dataError}</p>}
+        {graphError && <p role="alert" className="text-destructive">{graphError}</p>}
         <div className="flex flex-wrap gap-x-3 gap-y-1.5">
           {(Object.keys(kindMeta) as Kind[]).map((k) => {
             const m = kindMeta[k];
@@ -689,14 +677,21 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
             <span className="size-3 rounded-full border border-dashed border-neutral-400 bg-neutral-200" /> 范围外
           </span>
         </div>
+        {renderNodes.some(node => node.fold) && <select aria-label="查看折叠分组" className="max-w-full rounded-md border bg-background px-2 py-1.5 text-xs" value={selectedFoldId ?? ""} onChange={event => {if(event.target.value){focusReturn.current=event.currentTarget;setSelectedFoldId(event.target.value);}}}>
+          <option value="">查看折叠分组</option>
+          {renderNodes.filter((node):node is FoldNode => node.fold).map(fold => <option key={fold.key} value={fold.key}>{sourceNodesByKey.get(fold.parentKey)?.label ?? "未命名分组"} · {kindMeta[fold.kind].label}（{fold.hidden.length}）</option>)}
+        </select>}
         <p className="text-muted-foreground/80 border-border/60 border-t pt-2 leading-relaxed">
-          力导向布局，可拖拽节点、滚轮缩放；灰色「⋯」是折叠节点，点开可展开更多。
+          力导向布局，计算完成后显示；可拖拽节点、滚轮缩放；灰色「⋯」是折叠节点，点开可展开更多。
         </p>
       </div>
 
-      <AssetSheet node={selectedAsset} taskId={taskId} onOpenChange={(o) => !o && setSelectedAsset(null)} />
+      {nodeListOpen && <section id="coverage-node-list" aria-label="全部图节点" className="max-h-56 shrink-0 overflow-auto border-b"><CoverageNodePicker nodes={data?.nodes ?? []} onPick={(node,target) => {focusReturn.current=target;setSelectedAsset(node);}}/></section>}
+      <div ref={containerRef} className="min-h-0 flex-1 bg-muted/30" />
+      <AssetSheet node={selectedAsset} taskId={taskId} onReturnFocus={restoreFocus} onOpenChange={(o) => !o && setSelectedAsset(null)} />
       <FoldSheet
         fold={selectedFold}
+        onReturnFocus={() => {if(!selectedAsset)restoreFocus();}}
         onOpenChange={(o) => !o && setSelectedFoldId(null)}
         onShowMore={showMore}
         onPick={(n) => {

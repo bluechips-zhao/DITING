@@ -1350,8 +1350,9 @@ type TaskListMetrics struct {
 }
 
 // TaskListMetricsAll returns list aggregates for every live task in one query.
-// The lateral lookups use the per-exploration indexes instead of grouping the
-// complete activity history on every poll.
+// Activity/node lookups use per-exploration indexes. Findings are grouped once
+// across live tasks: a skewed task_id distribution can otherwise make PostgreSQL
+// choose a full findings scan for every task in a correlated lookup.
 func (d *DB) TaskListMetricsAll() (map[int64]TaskListMetrics, error) {
 	rows, err := d.Query(`
 		SELECT task.exploration_id,
@@ -1394,14 +1395,16 @@ func (d *DB) TaskListMetricsAll() (map[int64]TaskListMetrics, error) {
 			FROM exploration_nodes
 			WHERE exploration_id=task.exploration_id AND kind='intent' AND state='running'
 		) intent_metrics ON true
-		LEFT JOIN LATERAL (
-			SELECT COUNT(*) FILTER (WHERE severity='critical') AS critical,
-			       COUNT(*) FILTER (WHERE severity='high')     AS high,
-			       COUNT(*) FILTER (WHERE severity='medium')   AS medium,
-			       COUNT(*) FILTER (WHERE severity='low')      AS low
-			FROM findings
-			WHERE task_id=task.id
-		) finding_metrics ON true
+		LEFT JOIN (
+			SELECT finding.task_id,
+			       COUNT(*) FILTER (WHERE finding.severity='critical') AS critical,
+			       COUNT(*) FILTER (WHERE finding.severity='high')     AS high,
+			       COUNT(*) FILTER (WHERE finding.severity='medium')   AS medium,
+			       COUNT(*) FILTER (WHERE finding.severity='low')      AS low
+			FROM findings finding
+			JOIN tasks live ON live.id=finding.task_id AND live.deleted_at IS NULL
+			GROUP BY finding.task_id
+		) finding_metrics ON finding_metrics.task_id=task.id
 		WHERE task.deleted_at IS NULL`)
 	if err != nil {
 		return nil, err

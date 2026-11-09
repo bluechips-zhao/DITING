@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
+import { pollSource } from "@/lib/poll-source";
 import type {
   Activity,
   Agent,
@@ -36,7 +37,7 @@ import type {
   Settings,
   SkillItem,
   Stats,
-  Task,
+  DashboardTaskSummary,
   TokenTotal,
   Tool,
   TrafficExchange,
@@ -135,7 +136,7 @@ function SectionTitle({
 export default function DashboardPage() {
   const reduceMotion=useReducedMotion();
   // data state
-  const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [taskSummary, setTaskSummary] = React.useState<DashboardTaskSummary | null>(null);
   const [findings, setFindings] = React.useState<Finding[]>([]);
 	const [findingTotals, setFindingTotals] = React.useState<FindingStats | null>(null);
   const [stats, setStats] = React.useState<Stats | null>(null);
@@ -157,137 +158,60 @@ export default function DashboardPage() {
   const synced=(key:string)=>{setSourceErrors(old=>({...old,[key]:""}));setLastSync(old=>({...old,[key]:new Date().toLocaleTimeString("zh-CN")}))};
   const failed=(key:string,e:unknown)=>setSourceErrors(old=>({...old,[key]:e instanceof Error?e.message:"读取失败"}));
 
-  // The task list is the most expensive dashboard source. Poll it independently
-  // so a large history cannot hold back every other dashboard panel.
+  // Poll independently, pause while hidden, and retain each source's last
+  // successful snapshot when another endpoint fails.
   React.useEffect(() => {
-    let alive = true;
-    let loading = false;
-    let signature = "";
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const tr = await api.tasks();
-        if (!alive) return;
-        const nextSignature = JSON.stringify(tr.tasks);
-        if (nextSignature !== signature) {
-          signature = nextSignature;
-          setTasks(tr.tasks);
+    let taskSignature = "";
+    const watch = <T,>(
+      key: string,
+      request: () => Promise<T>,
+      receive: (value: T) => void,
+      interval = 5000,
+    ) => pollSource({
+      request,
+      receive: (value) => { receive(value); synced(key); },
+      fail: (error) => failed(key, error),
+      interval,
+    });
+    const stop = [
+      watch("任务", () => api.dashboardTasks(), (result) => {
+        const next = JSON.stringify(result);
+        if (next !== taskSignature) {
+          taskSignature = next;
+          setTaskSummary(result);
         }
-        synced("任务");
-      } catch (e) {
-        if(alive)failed("任务",e);
-      } finally {
-        loading = false;
-      }
-    };
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
-
-  // The remaining fast sources stay batched so one poll causes a single render.
-  React.useEffect(() => {
-    let alive = true;
-    let loading = false;
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const [findings, totals, stats, settings, pending, activity, tokens, conversationTokens] = await Promise.all([
-          api.findingsPage({ page: 1, pageSize: 8, sort: "time" }),
-		api.findingStats(),
-          api.stats(),
-          api.settings(),
-          api.interceptPending(),
-          api.activity(undefined, { limit: 30 }),
-          api.tokenStats(),
-          api.conversationTokens(),
-        ]);
-        if (!alive) return;
-        setFindings(findings.items);
-		setFindingTotals(totals);
-        setStats(stats);
-        setSettings(settings);
-        setPending(pending);
-        setActivity(activity.items);
-        setTokens(tokens.total ?? null);
-        setConvTokens(conversationTokens);
-        synced("状态与发现");
-      } catch (e) {
-        if(alive)failed("状态与发现",e);
-      } finally {
-        loading = false;
-      }
-    };
-    void load();
-    const timer = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
-
-  // slow poll: traffic, assets, system-static (every 15s)
-  React.useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const [traf, counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
-          api.traffic(0, 50),
-          api.assetCounts(),
-          api.agents(),
-          api.mcpServers(),
-          api.skills(),
-          api.tools(),
-          api.llmProfiles(),
-          api.usageStats(365),
-        ]);
-        if (!alive) return;
-        setTraffic(traf.exchanges ?? []);
-        setAssetCounts(counts ?? {});
-        setAgents(agentList);
-        setMcpServers(mcpList);
-        setSkills(skillList);
-        setTools(toolList);
-        setLLMProfiles(profileList);
-        setUsageStats(usage);
-        synced("资产与配置");
-      } catch (e) {
-        if(alive)failed("资产与配置",e);
-      }
-    };
-    void load();
-    const t = setInterval(load, 15000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
+      }),
+      watch("最近发现", () => api.findingsPage({ page: 1, pageSize: 8, sort: "time" }), (result) => setFindings(result.items)),
+      watch("发现统计", () => api.findingStats(), setFindingTotals),
+      watch("任务统计", () => api.stats(), setStats),
+      watch("系统设置", () => api.settings(), setSettings),
+      watch("待审批", () => api.interceptPending(), setPending),
+      watch("活动流", () => api.activity(undefined, { limit: 30 }), (result) => setActivity(result.items)),
+      watch("Token 总计", () => api.tokenStats(), (result) => setTokens(result.total ?? null)),
+      watch("对话用量", () => api.conversationTokens(), setConvTokens),
+      watch("最近流量", () => api.traffic(0, 50), (result) => setTraffic(result.exchanges ?? []), 15000),
+      watch("资产统计", () => api.assetCounts(), (result) => setAssetCounts(result ?? {}), 15000),
+      watch("Agent 配置", () => api.agents(), setAgents, 15000),
+      watch("MCP 配置", () => api.mcpServers(), setMcpServers, 15000),
+      watch("Skill 配置", () => api.skills(), setSkills, 15000),
+      watch("工具配置", () => api.tools(), setTools, 15000),
+      watch("模型配置", () => api.llmProfiles(), setLLMProfiles, 15000),
+      watch("计量账本", () => api.usageStats(365), setUsageStats, 15000),
+    ];
+    return () => stop.forEach((dispose) => dispose());
   }, []);
 
   // ── derived ───────────────────────────────────────────────────────────────
 
-  const tasksByStatus = React.useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const t of tasks) m[t.status] = (m[t.status] ?? 0) + 1;
-    return m;
-  }, [tasks]);
+  const tasksByStatus = taskSummary?.status_counts ?? {};
+  const taskCount = taskSummary?.total;
 
   const findingsBySev = React.useMemo(() => {
     return { critical: findingTotals?.critical ?? 0, high: findingTotals?.high ?? 0,
       medium: findingTotals?.medium ?? 0, low: findingTotals?.low ?? 0 };
   }, [findingTotals]);
 
-  const sortedTasks = React.useMemo(
-    () =>
-      [...tasks]
-        .sort((a, b) => (b.last_activity_unix ?? b.created_unix ?? 0) - (a.last_activity_unix ?? a.created_unix ?? 0))
-        .slice(0, 5),
-    [tasks],
-  );
+  const sortedTasks = taskSummary?.recent ?? [];
 
   const recentFindings = React.useMemo(
     () => [...findings].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts)).slice(0, 8),
@@ -358,24 +282,24 @@ export default function DashboardPage() {
   // 旧版：按 profile 归桶（来自 activity 的 task.tokens + 会话用量）。
   const tokenByProfileOld = React.useMemo<Map<number | null, Bucket>>(() => {
     const m = new Map<number | null, Bucket>();
-    const fold = (key: number | null, inp: number, out: number, cr: number, cw: number, addTask: boolean) => {
+    const fold = (key: number | null, inp: number, out: number, cr: number, cw: number, taskCount: number) => {
       const prev = m.get(key) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, taskCount: 0 };
       m.set(key, {
         input: prev.input + inp,
         output: prev.output + out,
         cacheRead: prev.cacheRead + cr,
         cacheWrite: prev.cacheWrite + cw,
-        taskCount: prev.taskCount + (addTask ? 1 : 0),
+        taskCount: prev.taskCount + taskCount,
       });
     };
-    for (const t of tasks) {
+    for (const t of taskSummary?.token_groups ?? []) {
       fold(
         t.llm_profile_id ?? defaultProfileId,
         t.tokens?.input_tokens ?? 0,
         t.tokens?.output_tokens ?? 0,
         t.tokens?.cache_read_tokens ?? 0,
         t.tokens?.cache_write_tokens ?? 0,
-        true,
+        t.tasks,
       );
     }
     for (const c of convTokens) {
@@ -385,11 +309,11 @@ export default function DashboardPage() {
         c.output_tokens,
         c.cache_read_tokens,
         c.cache_write_tokens,
-        false,
+        0,
       );
     }
     return m;
-  }, [tasks, convTokens, defaultProfileId]);
+  }, [taskSummary, convTokens, defaultProfileId]);
 
   // 新版：按 profile 归桶（来自 llm_usage 全局聚合，逐次调用精确）。
   const tokenByProfileNew = React.useMemo<Map<number | null, Bucket>>(() => {
@@ -444,10 +368,10 @@ export default function DashboardPage() {
       const prev = m.get(date) ?? { input: 0, output: 0, cacheRead: 0 };
       m.set(date, { input: prev.input + inp, output: prev.output + out, cacheRead: prev.cacheRead + cr });
     };
-    for (const t of tasks) {
+    for (const t of taskSummary?.token_groups ?? []) {
       if (tokenTab !== "all" && (t.llm_profile_id ?? defaultProfileId) !== tokenTab) continue;
       fold(
-        t.created_at.slice(0, 10),
+        t.date,
         t.tokens?.input_tokens ?? 0,
         t.tokens?.output_tokens ?? 0,
         t.tokens?.cache_read_tokens ?? 0,
@@ -458,7 +382,7 @@ export default function DashboardPage() {
       fold(c.created_at.slice(0, 10), c.input_tokens, c.output_tokens, c.cache_read_tokens);
     }
     return [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date: date.slice(5), ...v }));
-  }, [tasks, convTokens, tokenDays, tokenTab, defaultProfileId]);
+  }, [taskSummary, convTokens, tokenDays, tokenTab, defaultProfileId]);
 
   // 新版每日：来自 llm_usage 的真实每日消耗（ts 是实际调用时刻）。
   const dailyTokenDataNew = React.useMemo(() => {
@@ -506,8 +430,8 @@ export default function DashboardPage() {
     <div className="flex flex-1 flex-col gap-5 pb-6">
       {Object.entries(sourceErrors).filter(([,v])=>v).map(([key,message])=><p key={key} role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">{key}：{message}。保留上次快照（最后成功刷新 {lastSync[key]??"尚未成功"}），自动重试中。</p>)}
       <section className="workspace-hero" aria-label="工作台概况">
-        <div><div className="workspace-eyebrow"><span className="size-1.5 rounded-full bg-primary"/>EXPLORATION OVERVIEW</div><h1>掌握每一次探索。</h1><p>跟进任务进展，复核发现，让证据与结论保持一致。</p><div className="workspace-hero-actions"><Button asChild><Link href="/function/tasks"><TargetIcon className="size-3.5"/>进入任务</Link></Button><Button variant="outline" asChild><Link href="/function/findings"><BugIcon className="size-3.5"/>复核发现</Link></Button></div></div>
-        <div className="workspace-review"><div className="workspace-eyebrow">需要关注</div><div className="workspace-review-line"><span>待复核发现</span><strong>{findingTotals?.pending??"—"}</strong></div><div className="workspace-review-line"><span>暂停中的任务</span><strong>{tasksByStatus.paused??0}</strong></div><small>任务与发现分别跟进；完成任务后仍可复核证据。</small></div>
+        <div><div className="workspace-eyebrow"><span className="size-1.5 rounded-full bg-primary"/>WORKSPACE / OVERVIEW</div><h1>工作总览</h1><p>跟进当前任务，集中复核证据与发现。</p><div className="workspace-hero-actions"><Button asChild><Link href="/function/tasks"><TargetIcon className="size-3.5"/>查看任务</Link></Button><Button variant="outline" asChild><Link href="/function/findings"><BugIcon className="size-3.5"/>复核发现</Link></Button></div></div>
+        <div className="workspace-review"><div className="workspace-eyebrow">需要关注</div><div className="workspace-review-line"><span>待复核发现</span><strong>{findingTotals?.pending??"—"}</strong></div><div className="workspace-review-line"><span>暂停中的任务</span><strong>{taskSummary ? (tasksByStatus.paused ?? 0) : "—"}</strong></div><small>任务与发现分别跟进；完成任务后仍可复核证据。</small></div>
       </section>
 
       {/* ── Row 1: 5 stat cards ── */}
@@ -519,15 +443,15 @@ export default function DashboardPage() {
               <TargetIcon className="size-3" /> 活跃任务
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-semibold tabular-nums">{tasksByStatus.running ?? 0}</span>
-              <span className="text-xs text-muted-foreground">/ {tasks.length}</span>
+              <span className="text-2xl font-semibold tabular-nums">{taskSummary ? (tasksByStatus.running ?? 0) : "—"}</span>
+              <span className="text-xs text-muted-foreground">/ {taskCount ?? "—"}</span>
             </div>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px]">
             {(tasksByStatus.running ?? 0) > 0 && <span className="text-blue-400">探索 {tasksByStatus.running}</span>}
             {(tasksByStatus.paused ?? 0) > 0 && <span className="text-amber-400">暂停 {tasksByStatus.paused}</span>}
             {(tasksByStatus.done ?? 0) > 0 && <span className="text-emerald-400">完成 {tasksByStatus.done}</span>}
-            {tasks.length === 0 && <span className="text-muted-foreground">暂无任务</span>}
+            {taskCount === 0 && <span className="text-muted-foreground">暂无任务</span>}
           </CardContent>
         </Card>
 
@@ -970,7 +894,7 @@ export default function DashboardPage() {
             任务
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-muted-foreground">{tasks.length} 个任务</span>
+            <span className="text-[10px] text-muted-foreground">{taskCount ?? "—"} 个任务</span>
             <Link
               href="/function/tasks"
               className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
@@ -996,7 +920,7 @@ export default function DashboardPage() {
             {sortedTasks.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-xs text-muted-foreground">
-                  暂无任务
+                  {taskSummary ? "暂无任务" : "正在读取任务…"}
                 </td>
               </tr>
             ) : (

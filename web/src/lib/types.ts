@@ -49,6 +49,14 @@ export interface TaskCategory {
   updated_at: string;
 }
 
+export interface DashboardTaskSummary {
+  total: number;
+  status_counts: Record<string, number>;
+  recent: Task[];
+  // All tasks, grouped by original creation date/profile for legacy charts.
+  token_groups: { llm_profile_id: number | null; date: string; tasks: number; tokens: TokenTotal }[];
+}
+
 export interface TaskTemplate {
   id: number;
   name: string;

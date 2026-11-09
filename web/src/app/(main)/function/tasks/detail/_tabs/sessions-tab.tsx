@@ -32,6 +32,7 @@ import { MentionTextarea } from "@/components/mention-textarea";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
 import { Transcript } from "@/components/transcript";
+import { bindTranscriptScroll } from "@/lib/transcript-scroll";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1405,11 +1406,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     if (!vp) return;
     const onScroll = () => {
       if (approvalFocus.state && !focusHistory.ready) return;
-      atBottomRef.current = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 60;
       if (vp.scrollTop <= 80) loadEarlier(activeKeyRef.current, viewport); // near top → older page
     };
-    vp.addEventListener("scroll", onScroll, { passive: true });
-    return () => vp.removeEventListener("scroll", onScroll);
+    return bindTranscriptScroll(vp, atBottomRef, onScroll);
   }, [viewport, activeId, loadEarlier, approvalFocus.state, focusHistory.ready]);
   // open/switch a session → jump to the latest (bottom)
   // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally scrolls a newly selected session.

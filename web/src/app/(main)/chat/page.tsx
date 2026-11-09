@@ -28,6 +28,7 @@ import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-que
 import { TodoPopover } from "@/components/todo-popover";
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
 import { Transcript } from "@/components/transcript";
+import { bindTranscriptScroll } from "@/lib/transcript-scroll";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -658,11 +659,9 @@ function ChatView({
     if (!vp) return;
     const onScroll = () => {
       if (approvalFocus.state && !focusHistory.ready) return;
-      atBottomRef.current = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 60;
       if (vp.scrollTop <= 80) void loadEarlier(); // near top → pull an older page
     };
-    vp.addEventListener("scroll", onScroll, { passive: true });
-    return () => vp.removeEventListener("scroll", onScroll);
+    return bindTranscriptScroll(vp, atBottomRef, onScroll);
   }, [viewport, loadEarlier, approvalFocus.state, focusHistory.ready]);
   // open/switch a conversation → jump to the latest (bottom)
   // biome-ignore lint/correctness/useExhaustiveDependencies: changing conversations intentionally retriggers the scroll reset.
@@ -680,6 +679,20 @@ function ChatView({
     const vp = viewport();
     if (vp) vp.scrollTop = vp.scrollHeight;
   }, [messages, running, viewport, approvalFocus.state]);
+
+  // Lazy bodies and offscreen layout settle after messages stop changing. Keep
+  // the latest reply visible only while the reader is pinned to the bottom.
+  React.useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (approvalFocus.state || !atBottomRef.current) return;
+      const vp = viewport();
+      if (vp) vp.scrollTop = vp.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [conv.id, viewport, approvalFocus.state]);
 
   // Per-conversation token total, live — same accounting as the main-agent
   // console: completed runs' `result` sum + the in-progress run's latest `usage`.
@@ -1201,7 +1214,15 @@ export default function ChatPage() {
     window.history.replaceState(null, "", url);
   }, [selectedId]);
 
-  const selected = React.useMemo(() => convs.find((c) => c.id === selectedId) ?? null, [convs, selectedId]);
+  const conversationsById = React.useMemo(() => {
+    const index = new Map<number, Conversation>();
+    // Preserve the previous find() behavior if an overlapping page repeats ID.
+    for (const conversation of convs) {
+      if (!index.has(conversation.id)) index.set(conversation.id, conversation);
+    }
+    return index;
+  }, [convs]);
+  const selected = selectedId == null ? null : conversationsById.get(selectedId) ?? null;
   React.useEffect(() => {
     if (selectedId == null || selected) return;
     let live = true;
@@ -1212,8 +1233,8 @@ export default function ChatPage() {
   }, [selectedId,selected]);
   const agentByKey = React.useMemo(() => new Map(agents.map((agent) => [agent.key, agent])), [agents]);
   const filteredConversations = React.useMemo(
-    () => listingIDs.map(id=>convs.find(c=>c.id===id)).filter((c):c is Conversation=>!!c),
-    [convs, listingIDs],
+    () => listingIDs.map(id=>conversationsById.get(id)).filter((c):c is Conversation=>!!c),
+    [conversationsById, listingIDs],
   );
   const visibleConversations = React.useMemo(
     () => filteredConversations.slice(0, visibleConversationCount),

@@ -317,12 +317,12 @@ export default function AssetsPage() {
   return (
     <div className="flex h-[calc(100vh-6rem)] min-h-0 flex-col gap-4">
       {Object.entries(metaErrors).filter(([, message]) => message).map(([key, message]) => <LoadError key={key} message={key + "读取失败：" + message} retry={loadMeta} />)}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">资产</h1>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="whitespace-nowrap text-sm text-muted-foreground">
             共 <span className="tabular-nums">{totalAssets}</span> 项资产
           </span>
           {selected.size > 0 && (
@@ -338,6 +338,8 @@ export default function AssetsPage() {
           <CompanyDialog onSaved={refresh} />
         </div>
       </div>
+
+      {tab !== "company" && dslError && <LoadError message={"资产读取失败：" + dslError} retry={refresh} busy={loading} />}
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-4">
         <div className="overflow-x-auto overflow-y-hidden">
@@ -428,6 +430,8 @@ export default function AssetsPage() {
           <AssetCard
             cols={["", "域名", "ICP 备案", "归属企业", ""]}
             loaded={loaded}
+            loading={loading}
+            error={dslError}
             total={total}
             page={page}
             size={size}
@@ -440,7 +444,7 @@ export default function AssetsPage() {
             {slice(tabData("root_domain")).map((a) => (
               <TableRow key={a.id} className={selected.has(a.id) ? "bg-muted/40" : undefined}>
                 <TableCell className="w-8 pr-0">
-                  <Checkbox checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
+                  <Checkbox aria-label={`选择资产 ${a.id}`} checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
                 </TableCell>
                 <TableCell className="font-mono text-xs font-medium">{a.domain}</TableCell>
                 <TableCell className="text-xs">{a.icp || "—"}</TableCell>
@@ -470,6 +474,8 @@ export default function AssetsPage() {
           <AssetCard
             cols={["", "IP", "C段", "绑定域名", "开放端口", ""]}
             loaded={loaded}
+            loading={loading}
+            error={dslError}
             total={total}
             page={page}
             size={size}
@@ -482,7 +488,7 @@ export default function AssetsPage() {
             {slice(tabData("ip")).map((a) => (
               <TableRow key={a.id} className={selected.has(a.id) ? "bg-muted/40" : undefined}>
                 <TableCell className="w-8 pr-0">
-                  <Checkbox checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
+                  <Checkbox aria-label={`选择资产 ${a.id}`} checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
                 </TableCell>
                 <TableCell className="font-mono text-xs font-medium">{a.ip}</TableCell>
                 <TableCell className="font-mono text-xs">{a.c_segment || "—"}</TableCell>
@@ -518,6 +524,8 @@ export default function AssetsPage() {
           <AssetCard
             cols={["", "域名", "根域名", "解析类型", "解析值", ""]}
             loaded={loaded}
+            loading={loading}
+            error={dslError}
             total={total}
             page={page}
             size={size}
@@ -530,7 +538,7 @@ export default function AssetsPage() {
             {slice(tabData("subdomain")).map((a) => (
               <TableRow key={a.id} className={selected.has(a.id) ? "bg-muted/40" : undefined}>
                 <TableCell className="w-8 pr-0">
-                  <Checkbox checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
+                  <Checkbox aria-label={`选择资产 ${a.id}`} checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
                 </TableCell>
                 <TableCell className="font-mono text-xs font-medium">{a.domain}</TableCell>
                 <TableCell className="font-mono text-xs">{a.root_domain || "—"}</TableCell>
@@ -561,6 +569,8 @@ export default function AssetsPage() {
           <AssetCard
             cols={["", "应用名", "Bundle ID", "分类", "ICP 备案", ""]}
             loaded={loaded}
+            loading={loading}
+            error={dslError}
             total={total}
             page={page}
             size={size}
@@ -573,7 +583,7 @@ export default function AssetsPage() {
             {slice(tabData("app")).map((a) => (
               <TableRow key={a.id} className={selected.has(a.id) ? "bg-muted/40" : undefined}>
                 <TableCell className="w-8 pr-0">
-                  <Checkbox checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
+                  <Checkbox aria-label={`选择资产 ${a.id}`} checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
                 </TableCell>
                 <TableCell className="text-xs font-medium">{a.app_name || "—"}</TableCell>
                 <TableCell className="font-mono text-xs">{a.bundle_id || "—"}</TableCell>
@@ -602,6 +612,8 @@ export default function AssetsPage() {
           <AssetCard
             cols={["", "服务", "域名", "IP", "端口", "状态码", "标题", "指纹", "认证", ""]}
             loaded={loaded}
+            loading={loading}
+            error={dslError}
             total={total}
             page={page}
             size={size}
@@ -632,7 +644,7 @@ export default function AssetsPage() {
               return (
                 <TableRow key={a.id} className={selected.has(a.id) ? "bg-muted/40" : undefined}>
                   <TableCell className="w-8 pr-0">
-                    <Checkbox checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
+                    <Checkbox aria-label={`选择资产 ${a.id}`} checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
                   </TableCell>
                   <TableCell className="text-xs">
                     <Badge variant={isHttp ? "default" : "secondary"} className="font-mono text-[10px]">
@@ -699,6 +711,8 @@ export default function AssetsPage() {
           <AssetCard
             cols={["", "方法", "完整地址", "参数", ""]}
             loaded={loaded}
+            loading={loading}
+            error={dslError}
             total={total}
             page={page}
             size={size}
@@ -711,7 +725,7 @@ export default function AssetsPage() {
             {slice(tabData("endpoint")).map((a) => (
               <TableRow key={a.id} className={selected.has(a.id) ? "bg-muted/40" : undefined}>
                 <TableCell className="w-8 pr-0">
-                  <Checkbox checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
+                  <Checkbox aria-label={`选择资产 ${a.id}`} checked={selected.has(a.id)} onCheckedChange={() => toggleSelect(a.id)} />
                 </TableCell>
                 <TableCell className="w-16">
                   <MethodBadge method={a.method || ""} />
@@ -825,6 +839,8 @@ export default function AssetsPage() {
 function AssetCard({
   cols,
   loaded,
+  loading,
+  error,
   total,
   page,
   size,
@@ -837,6 +853,8 @@ function AssetCard({
 }: {
   cols: string[];
   loaded: boolean;
+  loading: boolean;
+  error: string;
   total: number;
   page: number;
   size: number;
@@ -857,7 +875,7 @@ function AssetCard({
   const someSelected = selected != null && pageIds.some((id) => selected.has(id));
 
   return (
-    <Card className="flex min-h-0 flex-1 flex-col overflow-hidden py-0">
+    <Card aria-busy={loading} className="flex min-h-0 flex-1 flex-col overflow-hidden py-0">
       <div className="min-h-0 flex-1 overflow-auto scrollbar-thin scrollbar-track-transparent">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-card">
@@ -866,6 +884,7 @@ function AssetCard({
                 c === "" && i === 0 && onToggleAll ? (
                   <TableHead key={i} className="w-8 pr-0">
                     <Checkbox
+                      aria-label="选择本页全部资产"
                       checked={allSelected ? true : someSelected ? "indeterminate" : false}
                       onCheckedChange={() => onToggleAll(pageIds)}
                     />
@@ -882,7 +901,7 @@ function AssetCard({
             ) : (
               <TableRow>
                 <TableCell colSpan={cols.length} className="py-12 text-center text-sm text-muted-foreground">
-                  {loaded ? "暂无数据。" : "加载中…"}
+                  {loading ? "加载中…" : error ? "读取失败，请重试。" : loaded ? "暂无数据。" : "加载中…"}
                 </TableCell>
               </TableRow>
             )}
@@ -890,9 +909,9 @@ function AssetCard({
         </Table>
       </div>
       {total > 0 && (
-        <div className="flex shrink-0 items-center gap-2 border-t px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t px-3 py-1.5 text-xs text-muted-foreground">
           <Select value={String(size)} onValueChange={(v) => onSize(Number(v))}>
-            <SelectTrigger size="sm" className="h-7 w-24">
+            <SelectTrigger aria-label="每页资产数" size="sm" className="h-7 w-24">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -914,6 +933,7 @@ function AssetCard({
                 variant="outline"
                 size="icon"
                 className="size-7"
+                aria-label="上一页资产"
                 disabled={page <= 0}
                 onClick={() => onPage((p) => Math.max(0, p - 1))}
               >
@@ -926,6 +946,7 @@ function AssetCard({
                 variant="outline"
                 size="icon"
                 className="size-7"
+                aria-label="下一页资产"
                 disabled={page + 1 >= pageCount}
                 onClick={() => onPage((p) => Math.min(pageCount - 1, p + 1))}
               >

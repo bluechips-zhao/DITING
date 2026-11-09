@@ -45,7 +45,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <Link prefetch={false} href="/function/tasks">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/logo.svg" alt="谛听" width={30} height={30} className="shrink-0" />
-                <span className="flex min-w-0 flex-col gap-0.5"><span className="text-base font-semibold tracking-[.08em]">DITING<span className="ml-2 text-xs font-normal tracking-normal">谛听</span></span><span className="text-[9px] tracking-[.15em] text-muted-foreground">PERSONAL WORKSPACE</span></span>
+                <span className="flex min-w-0 flex-col gap-0.5"><span className="text-base font-semibold tracking-[.08em]">DITING<span className="ml-2 text-xs font-normal tracking-normal">谛听</span></span><span className="text-[9px] tracking-[.15em] text-muted-foreground">SECURITY WORKSPACE</span></span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

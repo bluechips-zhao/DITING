@@ -679,6 +679,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("GET /api/dashboard/tasks", s.dashboardTasks)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/history", s.getLogsHistory)
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs)
@@ -1095,13 +1096,28 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
+	dtos, active, err := s.taskListSnapshot()
+	if err != nil {
+		writeErr(w, 500, "读取任务统计失败")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"tasks": dtos, "active": active})
+}
+
+func (s *Server) taskListSnapshot() ([]TaskDTO, string, error) {
 	active := ""
 	if t := s.m.ActiveTask(); t != nil {
 		active = t.ID
 	}
 	list := s.m.List()
-	metrics, _ := s.m.PG().TaskListMetricsAll()
-	archiveBlockers, _ := s.m.PG().TaskArchiveBlockers()
+	metrics, err := s.m.PG().TaskListMetricsAll()
+	if err != nil {
+		return nil, "", err
+	}
+	archiveBlockers, err := s.m.PG().TaskArchiveBlockers()
+	if err != nil {
+		return nil, "", err
+	}
 	dtos := make([]TaskDTO, 0, len(list))
 	for _, t := range list {
 		dto := taskDTO(t, s.resolvedTaskStatus(t))
@@ -1125,7 +1141,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		dtos = append(dtos, dto)
 	}
-	writeJSON(w, 200, map[string]any{"tasks": dtos, "active": active})
+	return dtos, active, nil
 }
 
 func (s *Server) resolvedTaskStatus(t *Task) string {
