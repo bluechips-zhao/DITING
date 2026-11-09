@@ -54,6 +54,6 @@ Docker 部署、端口设置和启动排障见[安装说明](docs/INSTALLATION.m
 
 ## 支持范围与来源
 
-当前正式版为 **2.8.0**。Windows 包通过隔离空库、配置向导及 2.7 升级检查；Linux amd64 镜像保留历史 Docker Desktop 运行证据，本次发布仅做离线逐层检查，未重新启动容器。独立 Linux/macOS 宿主和其他架构未实际验收；真实模型、靶场验收已取消，不计为通过。详细范围见[版本说明](docs/RELEASE_NOTES.md)。
+当前正式版为 **2.8.0**。Windows 保留已验收的 2.8 程序原字节，本次复测首次空库、鉴权和配置向导。Linux amd64 镜像从固定的 2.8 源码在 GitHub Ubuntu runner 重建，并通过空库、鉴权及内嵌页面检查；前端单元测试、类型检查和生产导出通过。独立 Linux 原生安装包、macOS 和其他架构未实际验收；真实模型与靶场验收已取消，不计为通过。详细范围见[版本说明](docs/RELEASE_NOTES.md)。
 
 遵守 [AGPL-3.0](LICENSE)，保留 ARTEX 来源及版权；字体和模板许可见[第三方说明](THIRD_PARTY_NOTICES.md)。
